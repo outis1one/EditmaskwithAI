@@ -11,5 +11,6 @@ aiofiles==23.2.1
 httpx==0.26.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
+email-validator==2.1.0
 opencv-python-headless==4.9.0.80
 scikit-image==0.22.0
