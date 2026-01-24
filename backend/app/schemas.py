@@ -68,6 +68,45 @@ class UploadResponse(BaseModel):
     current_url: str
 
 
+# Patch Library schemas
+class PatchCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    source_type: str  # "ai_generated", "manual_selection", "imported"
+    source_project_id: Optional[int] = None
+    source_edit_id: Optional[int] = None
+    category: Optional[str] = None
+    tags: Optional[str] = None
+    bbox: Optional[Dict[str, int]] = None
+
+
+class PatchResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    created_at: datetime
+    source_type: str
+    source_project_id: Optional[int]
+    source_edit_id: Optional[int]
+    width: int
+    height: int
+    tags: Optional[str]
+    category: Optional[str]
+    is_public: bool
+    file_path: str
+    thumbnail_path: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class PatchApply(BaseModel):
+    project_id: int
+    patch_id: int
+    bbox: Dict[str, int]
+    feather_px: int = 5
+
+
 # Generic responses
 class StatusResponse(BaseModel):
     status: str

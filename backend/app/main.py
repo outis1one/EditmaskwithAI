@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import init_db
-from app.routers import projects, edits, images
+from app.routers import projects, edits, images, patches
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(edits.router)
 app.include_router(images.router)
+app.include_router(patches.router)
 
 
 @app.get("/")

@@ -12,9 +12,19 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
 
     # AI Provider
-    ai_provider: str = "openai"
+    ai_provider: str = "mock"  # Options: openai, stability, replicate, mock
+
+    # Provider API Keys
     openai_api_key: str = ""
     stability_api_key: str = ""
+    replicate_api_key: str = ""
+
+    # Model Selection (optional, provider-specific)
+    stability_model: str = "sdxl"  # Options: sdxl, sd15, sd21
+    replicate_model: str = "sdxl-inpaint"  # Options: sdxl-inpaint, lama, realistic-vision
+
+    # Allow per-edit model override
+    allow_model_override: bool = True
 
     # File Storage
     data_dir: str = "./data"

@@ -14,3 +14,4 @@ class User(Base):
 
     # Relationships
     projects = relationship("Project", back_populates="user", cascade="all, delete-orphan")
+    patches = relationship("Patch", back_populates="user", cascade="all, delete-orphan")
