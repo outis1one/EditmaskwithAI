@@ -28,7 +28,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai-photo-edit-frontend
     ports:
-      - "80:80"
+      - "3080:80"  # Frontend on port 3080
     depends_on:
       - backend
     restart: unless-stopped
