@@ -36,6 +36,30 @@ class AIProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    async def text_to_image(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        model: Optional[str] = None,
+        negative_prompt: Optional[str] = None
+    ) -> bytes:
+        """
+        Generate an image from text prompt
+
+        Args:
+            prompt: Text description of desired image
+            width: Image width in pixels
+            height: Image height in pixels
+            model: Optional specific model to use
+            negative_prompt: What to avoid in the generation
+
+        Returns:
+            Generated image as bytes
+        """
+        pass
+
 
 class OpenAIProvider(AIProvider):
     """OpenAI DALL-E 2 based image editing (NOTE: Lower quality than DALL-E 3)"""
@@ -75,6 +99,43 @@ class OpenAIProvider(AIProvider):
                 f"{self.base_url}/images/edits",
                 files=files,
                 data=data,
+                headers=headers
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            # Download the generated image
+            image_url = result['data'][0]['url']
+            image_response = await client.get(image_url)
+            image_response.raise_for_status()
+
+            return image_response.content
+
+    async def text_to_image(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        model: Optional[str] = None,
+        negative_prompt: Optional[str] = None
+    ) -> bytes:
+        """Generate image using OpenAI DALL-E"""
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            data = {
+                'prompt': prompt,
+                'n': 1,
+                'size': f'{width}x{height}' if width == height else '1024x1024'
+            }
+
+            headers = {
+                'Authorization': f'Bearer {self.api_key}'
+            }
+
+            response = await client.post(
+                f"{self.base_url}/images/generations",
+                json=data,
                 headers=headers
             )
 
@@ -143,6 +204,55 @@ class StabilityAIProvider(AIProvider):
             response = await client.post(
                 f"{self.base_url}/generation/{engine_id}/image-to-image/masking",
                 files=files,
+                data=data,
+                headers=headers
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            # Decode base64 image
+            image_data = result['artifacts'][0]['base64']
+            return base64.b64decode(image_data)
+
+    async def text_to_image(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        model: Optional[str] = None,
+        negative_prompt: Optional[str] = None
+    ) -> bytes:
+        """Generate image using Stability AI SDXL"""
+
+        # Select model
+        model_key = model or self.default_model
+        engine_id = self.MODELS.get(model_key, self.MODELS['sdxl'])
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Build prompts array
+            data = {
+                'text_prompts[0][text]': prompt,
+                'text_prompts[0][weight]': '1.0',
+                'cfg_scale': '7',
+                'samples': '1',
+                'steps': '50',
+                'height': str(height),
+                'width': str(width),
+            }
+
+            # Add negative prompt if provided
+            if negative_prompt:
+                data['text_prompts[1][text]'] = negative_prompt
+                data['text_prompts[1][weight]'] = '-1.0'
+
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Accept': 'application/json'
+            }
+
+            response = await client.post(
+                f"{self.base_url}/generation/{engine_id}/text-to-image",
                 data=data,
                 headers=headers
             )
@@ -278,6 +388,77 @@ class ReplicateProvider(AIProvider):
 
             raise Exception("Replicate prediction timed out")
 
+    async def text_to_image(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        model: Optional[str] = None,
+        negative_prompt: Optional[str] = None
+    ) -> bytes:
+        """Generate image using Replicate SDXL"""
+
+        # Use SDXL for text-to-image
+        model_version = 'stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b'
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Create prediction
+            prediction_data = {
+                "version": model_version,
+                "input": {
+                    "prompt": prompt,
+                    "width": width,
+                    "height": height,
+                    "num_outputs": 1,
+                    "guidance_scale": 7.5,
+                    "num_inference_steps": 50,
+                }
+            }
+
+            # Add negative prompt if provided
+            if negative_prompt:
+                prediction_data["input"]["negative_prompt"] = negative_prompt
+
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json'
+            }
+
+            # Start prediction
+            response = await client.post(
+                f"{self.base_url}/predictions",
+                json=prediction_data,
+                headers=headers
+            )
+            response.raise_for_status()
+            prediction = response.json()
+
+            # Poll for completion
+            prediction_url = prediction['urls']['get']
+            max_attempts = 60
+            attempt = 0
+
+            while attempt < max_attempts:
+                await asyncio.sleep(2)
+
+                status_response = await client.get(prediction_url, headers=headers)
+                status_response.raise_for_status()
+                status_data = status_response.json()
+
+                if status_data['status'] == 'succeeded':
+                    # Download result image
+                    output_url = status_data['output'][0]
+                    image_response = await client.get(output_url)
+                    image_response.raise_for_status()
+                    return image_response.content
+
+                elif status_data['status'] == 'failed':
+                    raise Exception(f"Replicate prediction failed: {status_data.get('error')}")
+
+                attempt += 1
+
+            raise Exception("Replicate text-to-image timed out")
+
 
 class MockAIProvider(AIProvider):
     """Mock provider for testing (returns original patch)"""
@@ -293,6 +474,30 @@ class MockAIProvider(AIProvider):
     ) -> bytes:
         """Return the original patch (for testing)"""
         return patch_image_bytes
+
+    async def text_to_image(
+        self,
+        prompt: str,
+        width: int = 1024,
+        height: int = 1024,
+        model: Optional[str] = None,
+        negative_prompt: Optional[str] = None
+    ) -> bytes:
+        """Generate a placeholder image (for testing)"""
+        from PIL import Image, ImageDraw, ImageFont
+
+        # Create a simple placeholder image
+        img = Image.new('RGB', (width, height), color='lightgray')
+        draw = ImageDraw.Draw(img)
+
+        # Draw text
+        text = f"Mock Image\n{width}x{height}\n{prompt[:50]}"
+        draw.text((width//4, height//2), text, fill='black')
+
+        # Convert to bytes
+        buffer = BytesIO()
+        img.save(buffer, format='PNG')
+        return buffer.getvalue()
 
 
 def get_ai_provider(provider_name: Optional[str] = None, model: Optional[str] = None) -> AIProvider:

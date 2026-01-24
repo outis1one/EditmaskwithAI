@@ -107,6 +107,30 @@ class PatchApply(BaseModel):
     feather_px: int = 5
 
 
+# Text-to-Image schemas
+class TextToImageRequest(BaseModel):
+    prompt: str
+    width: int = 1024
+    height: int = 1024
+    negative_prompt: Optional[str] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+    create_project: bool = True
+    project_name: Optional[str] = None
+
+
+class TextToImageResponse(BaseModel):
+    status: str
+    prompt: str
+    width: int
+    height: int
+    project_id: Optional[int] = None
+    image_url: Optional[str] = None
+    layer_position: Optional[Dict[str, int]] = None
+    ai_provider: str
+    ai_model: Optional[str] = None
+
+
 # Generic responses
 class StatusResponse(BaseModel):
     status: str

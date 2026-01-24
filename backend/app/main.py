@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import init_db
-from app.routers import projects, edits, images, patches
+from app.routers import projects, edits, images, patches, generate
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.include_router(projects.router)
 app.include_router(edits.router)
 app.include_router(images.router)
 app.include_router(patches.router)
+app.include_router(generate.router)
 
 
 @app.get("/")
