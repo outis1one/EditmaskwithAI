@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai-photo-edit-backend
     ports:
-      - "8000:8000"
+      - "8101:8000"  # External 8101, internal 8000
     volumes:
       - ./data:/app/data
       - ./backend:/app
@@ -17,6 +17,7 @@ services:
       - AI_PROVIDER=${AI_PROVIDER:-mock}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - STABILITY_API_KEY=${STABILITY_API_KEY:-}
+      - REPLICATE_API_KEY=${REPLICATE_API_KEY:-}
       - CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost
     restart: unless-stopped
     networks:
