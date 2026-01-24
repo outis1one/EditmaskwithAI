@@ -1,0 +1,54 @@
+# Caddy 2 Configuration for AI Photo Edit
+
+# Replace with your actual domain
+ai-photo-edit.yourdomain.com {
+    # Frontend - serves the React app
+    reverse_proxy localhost:3080
+
+    # API routes - proxy to backend
+    handle /projects* {
+        reverse_proxy localhost:8000
+    }
+
+    handle /edits* {
+        reverse_proxy localhost:8000
+    }
+
+    handle /patches* {
+        reverse_proxy localhost:8000
+    }
+
+    handle /generate* {
+        reverse_proxy localhost:8000
+    }
+
+    handle /health {
+        reverse_proxy localhost:8000
+    }
+
+    handle /docs {
+        reverse_proxy localhost:8000
+    }
+
+    handle /openapi.json {
+        reverse_proxy localhost:8000
+    }
+}
+
+# Alternative: Use IP:Port format (no domain)
+# :8080 {
+#     reverse_proxy localhost:3080
+#
+#     handle /projects* {
+#         reverse_proxy localhost:8000
+#     }
+#     handle /edits* {
+#         reverse_proxy localhost:8000
+#     }
+#     handle /patches* {
+#         reverse_proxy localhost:8000
+#     }
+#     handle /generate* {
+#         reverse_proxy localhost:8000
+#     }
+# }
