@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { fabric } from 'fabric';
 import './ImageCanvas.css';
 
@@ -7,6 +7,7 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
   const fabricCanvasRef = useRef(null);
   const [currentSelection, setCurrentSelection] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isTransformMode, setIsTransformMode] = useState(false);
   const lassoPoints = useRef([]);
 
   useEffect(() => {
@@ -23,8 +24,25 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     const handleResize = () => {
       const container = canvasRef.current?.parentElement;
       if (container) {
-        canvas.setWidth(container.clientWidth);
-        canvas.setHeight(Math.min(container.clientHeight, 800));
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        canvas.setWidth(width);
+        canvas.setHeight(height);
+
+        // Re-center and rescale the image if it exists
+        const bgImage = canvas.backgroundImage;
+        if (bgImage) {
+          const scale = Math.min(
+            (width - 40) / bgImage.width,
+            (height - 40) / bgImage.height,
+            1
+          );
+          bgImage.scale(scale);
+          bgImage.set({
+            left: (width - bgImage.width * scale) / 2,
+            top: (height - bgImage.height * scale) / 2,
+          });
+        }
         canvas.renderAll();
       }
     };
@@ -50,11 +68,13 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     fabric.Image.fromURL(cacheBustedUrl, (img) => {
       canvas.clear();
 
-      // Scale image to fit canvas
+      // Scale image to fit canvas with padding
+      const padding = 40;
+      const availableWidth = canvas.width - padding;
+      const availableHeight = canvas.height - padding;
       const scale = Math.min(
-        canvas.width / img.width,
-        canvas.height / img.height,
-        1
+        availableWidth / img.width,
+        availableHeight / img.height
       );
 
       img.scale(scale);
@@ -80,17 +100,21 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
 
     const canvas = fabricCanvasRef.current;
 
-    // Clear previous selection
+    // Clear previous selection when changing modes
     if (currentSelection) {
       canvas.remove(currentSelection);
       setCurrentSelection(null);
       onSelectionChange(null);
     }
 
+    // Reset transform mode
+    setIsTransformMode(false);
+
     // Set up event handlers based on mode
     canvas.off('mouse:down');
     canvas.off('mouse:move');
     canvas.off('mouse:up');
+    canvas.off('object:modified');
 
     if (selectionMode === 'rectangle') {
       setupRectangleMode(canvas);
@@ -105,6 +129,23 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     let rect, isDown, startX, startY;
 
     canvas.on('mouse:down', (e) => {
+      // If clicking on existing selection, enable transform mode
+      if (e.target && e.target === currentSelection) {
+        setIsTransformMode(true);
+        return;
+      }
+
+      // If in transform mode and clicking elsewhere, exit transform mode
+      if (isTransformMode) {
+        setIsTransformMode(false);
+      }
+
+      // Clear previous selection if exists
+      if (currentSelection) {
+        canvas.remove(currentSelection);
+        setCurrentSelection(null);
+      }
+
       isDown = true;
       const pointer = canvas.getPointer(e.e);
       startX = pointer.x;
@@ -119,6 +160,14 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
         stroke: '#00ff00',
         strokeWidth: 2,
         selectable: true,
+        hasControls: true,
+        hasBorders: true,
+        lockRotation: false,
+        cornerColor: '#00ff00',
+        cornerSize: 10,
+        transparentCorners: false,
+        borderColor: '#00ff00',
+        borderScaleFactor: 2,
       });
 
       canvas.add(rect);
@@ -126,7 +175,7 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
 
     canvas.on('mouse:move', (e) => {
-      if (!isDown) return;
+      if (!isDown || isTransformMode) return;
 
       const pointer = canvas.getPointer(e.e);
       const width = pointer.x - startX;
@@ -143,8 +192,18 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
 
     canvas.on('mouse:up', () => {
-      isDown = false;
-      updateSelection(rect, 'rectangle');
+      if (isDown && !isTransformMode) {
+        isDown = false;
+        canvas.setActiveObject(rect);
+        updateSelection(rect, 'rectangle');
+      }
+    });
+
+    // Update selection when object is modified (moved, scaled, rotated)
+    canvas.on('object:modified', (e) => {
+      if (e.target && e.target === currentSelection) {
+        updateTransformedSelection(e.target, 'rectangle');
+      }
     });
   };
 
@@ -152,6 +211,23 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     let ellipse, isDown, startX, startY;
 
     canvas.on('mouse:down', (e) => {
+      // If clicking on existing selection, enable transform mode
+      if (e.target && e.target === currentSelection) {
+        setIsTransformMode(true);
+        return;
+      }
+
+      // If in transform mode and clicking elsewhere, exit transform mode
+      if (isTransformMode) {
+        setIsTransformMode(false);
+      }
+
+      // Clear previous selection if exists
+      if (currentSelection) {
+        canvas.remove(currentSelection);
+        setCurrentSelection(null);
+      }
+
       isDown = true;
       const pointer = canvas.getPointer(e.e);
       startX = pointer.x;
@@ -166,6 +242,14 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
         stroke: '#00ff00',
         strokeWidth: 2,
         selectable: true,
+        hasControls: true,
+        hasBorders: true,
+        lockRotation: false,
+        cornerColor: '#00ff00',
+        cornerSize: 10,
+        transparentCorners: false,
+        borderColor: '#00ff00',
+        borderScaleFactor: 2,
       });
 
       canvas.add(ellipse);
@@ -173,7 +257,7 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
 
     canvas.on('mouse:move', (e) => {
-      if (!isDown) return;
+      if (!isDown || isTransformMode) return;
 
       const pointer = canvas.getPointer(e.e);
       const rx = Math.abs(pointer.x - startX) / 2;
@@ -190,8 +274,18 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
 
     canvas.on('mouse:up', () => {
-      isDown = false;
-      updateSelection(ellipse, 'ellipse');
+      if (isDown && !isTransformMode) {
+        isDown = false;
+        canvas.setActiveObject(ellipse);
+        updateSelection(ellipse, 'ellipse');
+      }
+    });
+
+    // Update selection when object is modified (moved, scaled, rotated)
+    canvas.on('object:modified', (e) => {
+      if (e.target && e.target === currentSelection) {
+        updateTransformedSelection(e.target, 'ellipse');
+      }
     });
   };
 
@@ -199,6 +293,23 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     let line, points = [];
 
     canvas.on('mouse:down', (e) => {
+      // If clicking on existing selection, enable transform mode
+      if (e.target && e.target === currentSelection) {
+        setIsTransformMode(true);
+        return;
+      }
+
+      // If in transform mode and clicking elsewhere, exit transform mode
+      if (isTransformMode) {
+        setIsTransformMode(false);
+      }
+
+      // Clear previous selection if exists
+      if (currentSelection) {
+        canvas.remove(currentSelection);
+        setCurrentSelection(null);
+      }
+
       setIsDrawing(true);
       const pointer = canvas.getPointer(e.e);
       points = [{ x: pointer.x, y: pointer.y }];
@@ -208,6 +319,14 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
         stroke: '#00ff00',
         strokeWidth: 2,
         selectable: true,
+        hasControls: true,
+        hasBorders: true,
+        lockRotation: false,
+        cornerColor: '#00ff00',
+        cornerSize: 10,
+        transparentCorners: false,
+        borderColor: '#00ff00',
+        borderScaleFactor: 2,
       });
 
       canvas.add(line);
@@ -215,7 +334,7 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
 
     canvas.on('mouse:move', (e) => {
-      if (!isDrawing) return;
+      if (!isDrawing || isTransformMode) return;
 
       const pointer = canvas.getPointer(e.e);
       points.push({ x: pointer.x, y: pointer.y });
@@ -225,9 +344,19 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
 
     canvas.on('mouse:up', () => {
-      setIsDrawing(false);
-      lassoPoints.current = points;
-      updateSelection(line, 'lasso');
+      if (isDrawing && !isTransformMode) {
+        setIsDrawing(false);
+        lassoPoints.current = points;
+        canvas.setActiveObject(line);
+        updateSelection(line, 'lasso');
+      }
+    });
+
+    // Update selection when object is modified (moved, scaled, rotated)
+    canvas.on('object:modified', (e) => {
+      if (e.target && e.target === currentSelection) {
+        updateTransformedSelection(e.target, 'lasso');
+      }
     });
   };
 
@@ -285,6 +414,54 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     });
   };
 
+  // Update selection after transformation (move, scale, rotate)
+  const updateTransformedSelection = (selection, type) => {
+    if (!selection || !fabricCanvasRef.current) return;
+
+    const canvas = fabricCanvasRef.current;
+    const bgImage = canvas.backgroundImage;
+
+    if (!bgImage) return;
+
+    const imgScale = bgImage.scaleX;
+    const imgLeft = bgImage.left;
+    const imgTop = bgImage.top;
+
+    // Get the transformed bounding rect (accounts for scale and rotation)
+    const bounds = selection.getBoundingRect(true);
+
+    let bbox = {
+      x: Math.round((bounds.left - imgLeft) / imgScale),
+      y: Math.round((bounds.top - imgTop) / imgScale),
+      width: Math.round(bounds.width / imgScale),
+      height: Math.round(bounds.height / imgScale),
+    };
+
+    let selectionData = null;
+
+    // For lasso, we need to transform the points based on the object's transformation
+    if (type === 'lasso' && lassoPoints.current.length > 0) {
+      const matrix = selection.calcTransformMatrix();
+      const transformedPoints = lassoPoints.current.map(p => {
+        const transformed = fabric.util.transformPoint(
+          new fabric.Point(p.x, p.y),
+          matrix
+        );
+        return [
+          Math.round((transformed.x - bounds.left) / imgScale),
+          Math.round((transformed.y - bounds.top) / imgScale),
+        ];
+      });
+      selectionData = { points: transformedPoints };
+    }
+
+    onSelectionChange({
+      type,
+      bbox,
+      selectionData,
+    });
+  };
+
   const clearSelection = () => {
     if (currentSelection && fabricCanvasRef.current) {
       fabricCanvasRef.current.remove(currentSelection);
@@ -297,9 +474,14 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     <div className="canvas-container">
       <canvas ref={canvasRef} />
       {currentSelection && (
-        <button className="clear-selection-btn" onClick={clearSelection}>
-          Clear Selection
-        </button>
+        <>
+          <div className="selection-hint">
+            Click selection to move/resize/rotate
+          </div>
+          <button className="clear-selection-btn" onClick={clearSelection}>
+            Clear Selection
+          </button>
+        </>
       )}
     </div>
   );
