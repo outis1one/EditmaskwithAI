@@ -146,4 +146,94 @@ export const patchesApi = {
     `${API_BASE_URL}/patches/${patchId}/image${thumbnail ? '?thumbnail=true' : ''}`,
 };
 
+export const toolsApi = {
+  // Remove background from project image
+  removeBackground: async (projectId) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+
+    const response = await api.post('/tools/remove-background', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  // Remove background and save as layer
+  removeBackgroundToLayer: async (projectId) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+
+    const response = await api.post('/tools/remove-background-to-layer', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  // Smart select object at point
+  smartSelect: async (projectId, x, y) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+    formData.append('point_x', x);
+    formData.append('point_y', y);
+
+    const response = await api.post('/tools/smart-select', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  // Select by color
+  colorSelect: async (projectId, r, g, b, tolerance = 30) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+    formData.append('color_r', r);
+    formData.append('color_g', g);
+    formData.append('color_b', b);
+    formData.append('tolerance', tolerance);
+
+    const response = await api.post('/tools/color-select', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  // Extract object with mask
+  extractObject: async (projectId, maskBlob) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+    formData.append('mask', maskBlob, 'mask.png');
+
+    const response = await api.post('/tools/extract-object', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  // List layers
+  listLayers: async (projectId) => {
+    const response = await api.get(`/tools/layers/${projectId}`);
+    return response.data;
+  },
+
+  // Flatten layers
+  flattenLayers: async (projectId, layerOrder) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+    formData.append('layer_order', JSON.stringify(layerOrder));
+
+    const response = await api.post('/tools/flatten-layers', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  // Get layer image URL
+  getLayerImageUrl: (projectId, layerId) =>
+    `${API_BASE_URL}/projects/${projectId}/layers/layer_${layerId}.png`,
+};
+
 export default api;

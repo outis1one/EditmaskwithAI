@@ -3,7 +3,9 @@ import ImageCanvas from './components/ImageCanvas';
 import Controls from './components/Controls';
 import History from './components/History';
 import EyeCatalog from './components/EyeCatalog';
-import { projectsApi, editsApi } from './utils/api';
+import AdvancedTools from './components/AdvancedTools';
+import Layers from './components/Layers';
+import { projectsApi, editsApi, toolsApi } from './utils/api';
 import './App.css';
 
 function App() {
@@ -21,6 +23,9 @@ function App() {
   const [projectName, setProjectName] = useState('');
   const [showProjectInput, setShowProjectInput] = useState(true);
   const [currentEditIndex, setCurrentEditIndex] = useState(-1);
+  const [layers, setLayers] = useState([]);
+  const [activeLayer, setActiveLayer] = useState('background');
+  const [generatedMask, setGeneratedMask] = useState(null);
   const editsRef = useRef([]);
 
   // Create project and upload image
@@ -273,6 +278,32 @@ function App() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [project, edits]);
 
+  // Handle layer creation from advanced tools
+  const handleLayerCreated = (layer) => {
+    setLayers((prev) => [...prev, { ...layer, visible: true }]);
+  };
+
+  // Handle mask generation from smart select / color select
+  const handleMaskGenerated = async (maskBlob, source) => {
+    setGeneratedMask({ blob: maskBlob, source });
+    // The mask can be used for various operations
+  };
+
+  // Handle flatten layers
+  const handleFlattenLayers = async (layerOrder) => {
+    if (!project) return;
+    try {
+      setIsProcessing(true);
+      await toolsApi.flattenLayers(project.id, layerOrder);
+      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
+      setLayers([]);
+    } catch (err) {
+      setError(`Failed to flatten layers: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="app">
       <div className="container">
@@ -347,6 +378,29 @@ function App() {
                 onDownload={handleDownload}
                 isProcessing={isProcessing}
                 hasSelection={!!selection}
+              />
+
+              <AdvancedTools
+                projectId={project?.id}
+                selection={selection}
+                onLayerCreated={handleLayerCreated}
+                onMaskGenerated={handleMaskGenerated}
+                onImageUpdate={() => {
+                  setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
+                }}
+                isProcessing={isProcessing}
+                setIsProcessing={setIsProcessing}
+                setError={setError}
+              />
+
+              <Layers
+                projectId={project?.id}
+                layers={layers}
+                setLayers={setLayers}
+                activeLayer={activeLayer}
+                setActiveLayer={setActiveLayer}
+                onFlatten={handleFlattenLayers}
+                isProcessing={isProcessing}
               />
 
               <EyeCatalog
