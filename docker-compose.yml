@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./backend:/app
+      - ./scripts:/scripts
     environment:
       - DATABASE_URL=sqlite:///./data/ai_photo_edit.db
       - SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production}
