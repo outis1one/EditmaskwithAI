@@ -2,12 +2,22 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { fabric } from 'fabric';
 import './ImageCanvas.css';
 
-const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
+const ImageCanvas = ({
+  imageUrl,
+  onSelectionChange,
+  selectionMode,
+  advancedToolMode,
+  onAdvancedToolClick,
+  zoom = 1,
+  onZoomChange,
+  externalSelection, // { polygon: [[x,y],...], bbox: {x,y,width,height} }
+}) => {
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
   const [currentSelection, setCurrentSelection] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isTransformMode, setIsTransformMode] = useState(false);
+  const [currentZoom, setCurrentZoom] = useState(zoom);
   const lassoPoints = useRef([]);
 
   useEffect(() => {
@@ -50,11 +60,36 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     handleResize();
     window.addEventListener('resize', handleResize);
 
+    // Mouse wheel zoom
+    const handleWheel = (opt) => {
+      const e = opt.e;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const delta = e.deltaY;
+      let newZoom = canvas.getZoom();
+      newZoom *= 0.999 ** delta;
+
+      // Clamp zoom between 0.1x and 10x
+      if (newZoom > 10) newZoom = 10;
+      if (newZoom < 0.1) newZoom = 0.1;
+
+      // Zoom to point under cursor
+      const pointer = canvas.getPointer(e, true);
+      canvas.zoomToPoint({ x: pointer.x, y: pointer.y }, newZoom);
+
+      setCurrentZoom(newZoom);
+      onZoomChange?.(newZoom);
+    };
+
+    canvas.on('mouse:wheel', handleWheel);
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      canvas.off('mouse:wheel', handleWheel);
       canvas.dispose();
     };
-  }, []);
+  }, [onZoomChange]);
 
   // Load image when URL changes
   useEffect(() => {
@@ -94,11 +129,127 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     }, { crossOrigin: 'anonymous' });
   }, [imageUrl]);
 
+  // Handle advanced tool mode clicks (smart-select, color-select)
+  useEffect(() => {
+    if (!fabricCanvasRef.current || !advancedToolMode) return;
+
+    const canvas = fabricCanvasRef.current;
+    const bgImage = canvas.backgroundImage;
+
+    const handleAdvancedClick = async (e) => {
+      if (!bgImage || !onAdvancedToolClick) return;
+
+      const pointer = canvas.getPointer(e.e);
+
+      // Convert canvas coordinates to image coordinates
+      const imgScale = bgImage.scaleX;
+      const imgLeft = bgImage.left;
+      const imgTop = bgImage.top;
+
+      const imgX = Math.round((pointer.x - imgLeft) / imgScale);
+      const imgY = Math.round((pointer.y - imgTop) / imgScale);
+
+      // Check if click is within image bounds
+      if (imgX < 0 || imgY < 0 || imgX > bgImage.width || imgY > bgImage.height) {
+        return;
+      }
+
+      if (advancedToolMode === 'color-select') {
+        // Get pixel color at click position
+        const ctx = canvas.getContext('2d');
+        const canvasX = pointer.x * canvas.getZoom();
+        const canvasY = pointer.y * canvas.getZoom();
+
+        // For color picking, we need to get the color from the image
+        // Create a temporary canvas to read pixel color
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = bgImage.width;
+        tempCanvas.height = bgImage.height;
+        const tempCtx = tempCanvas.getContext('2d');
+
+        // Draw the image element to temp canvas
+        const imgElement = bgImage.getElement();
+        tempCtx.drawImage(imgElement, 0, 0);
+
+        const pixelData = tempCtx.getImageData(imgX, imgY, 1, 1).data;
+        const color = { r: pixelData[0], g: pixelData[1], b: pixelData[2] };
+
+        onAdvancedToolClick(imgX, imgY, color);
+      } else {
+        onAdvancedToolClick(imgX, imgY, null);
+      }
+    };
+
+    canvas.on('mouse:down', handleAdvancedClick);
+
+    return () => {
+      canvas.off('mouse:down', handleAdvancedClick);
+    };
+  }, [advancedToolMode, onAdvancedToolClick]);
+
+  // Handle external selection (from smart-select or color-select)
+  useEffect(() => {
+    if (!fabricCanvasRef.current || !externalSelection?.polygon?.length) return;
+
+    const canvas = fabricCanvasRef.current;
+    const bgImage = canvas.backgroundImage;
+
+    if (!bgImage) return;
+
+    // Clear previous selection
+    if (currentSelection) {
+      canvas.remove(currentSelection);
+    }
+
+    // Convert image coordinates to canvas coordinates
+    const imgScale = bgImage.scaleX;
+    const imgLeft = bgImage.left;
+    const imgTop = bgImage.top;
+
+    const canvasPoints = externalSelection.polygon.map(([x, y]) => ({
+      x: x * imgScale + imgLeft,
+      y: y * imgScale + imgTop,
+    }));
+
+    // Create polygon selection
+    const polygon = new fabric.Polygon(canvasPoints, {
+      fill: 'rgba(255, 255, 255, 0.3)',
+      stroke: '#00ff00',
+      strokeWidth: 2,
+      selectable: true,
+      hasControls: true,
+      hasBorders: true,
+      lockRotation: false,
+      cornerColor: '#00ff00',
+      cornerSize: 10,
+      transparentCorners: false,
+      borderColor: '#00ff00',
+      borderScaleFactor: 2,
+    });
+
+    canvas.add(polygon);
+    canvas.setActiveObject(polygon);
+    setCurrentSelection(polygon);
+    lassoPoints.current = canvasPoints;
+
+    // Notify parent of selection
+    onSelectionChange({
+      type: 'polygon',
+      bbox: externalSelection.bbox,
+      selectionData: { points: externalSelection.polygon },
+    });
+
+    canvas.renderAll();
+  }, [externalSelection]);
+
   // Handle selection mode changes
   useEffect(() => {
     if (!fabricCanvasRef.current) return;
 
     const canvas = fabricCanvasRef.current;
+
+    // Don't set up selection handlers if in advanced tool mode
+    if (advancedToolMode) return;
 
     // Clear previous selection when changing modes
     if (currentSelection) {
@@ -123,7 +274,7 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     } else if (selectionMode === 'lasso') {
       setupLassoMode(canvas);
     }
-  }, [selectionMode]);
+  }, [selectionMode, advancedToolMode]);
 
   const setupRectangleMode = (canvas) => {
     let rect, isDown, startX, startY;
@@ -497,10 +648,57 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
     }
   };
 
+  const handleZoomIn = () => {
+    if (!fabricCanvasRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    let newZoom = canvas.getZoom() * 1.2;
+    if (newZoom > 10) newZoom = 10;
+    canvas.setZoom(newZoom);
+    setCurrentZoom(newZoom);
+    onZoomChange?.(newZoom);
+  };
+
+  const handleZoomOut = () => {
+    if (!fabricCanvasRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    let newZoom = canvas.getZoom() / 1.2;
+    if (newZoom < 0.1) newZoom = 0.1;
+    canvas.setZoom(newZoom);
+    setCurrentZoom(newZoom);
+    onZoomChange?.(newZoom);
+  };
+
+  const handleZoomReset = () => {
+    if (!fabricCanvasRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    canvas.setZoom(1);
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    setCurrentZoom(1);
+    onZoomChange?.(1);
+  };
+
   return (
     <div className="canvas-container">
       <canvas ref={canvasRef} />
-      {currentSelection && (
+
+      {/* Zoom controls */}
+      <div className="zoom-controls">
+        <button onClick={handleZoomOut} title="Zoom Out">−</button>
+        <span className="zoom-level">{Math.round(currentZoom * 100)}%</span>
+        <button onClick={handleZoomIn} title="Zoom In">+</button>
+        <button onClick={handleZoomReset} title="Reset Zoom">⟲</button>
+      </div>
+
+      {/* Advanced tool mode indicator */}
+      {advancedToolMode && (
+        <div className="tool-mode-indicator">
+          {advancedToolMode === 'smart-select' && 'Click on an object to select it'}
+          {advancedToolMode === 'color-select' && 'Click on a color to select similar pixels'}
+          {advancedToolMode === 'object-remove' && 'Click on an object to remove it'}
+        </div>
+      )}
+
+      {currentSelection && !advancedToolMode && (
         <>
           <div className="selection-hint">
             Click selection to move/resize/rotate

@@ -11,6 +11,7 @@ const Layers = ({
   onLayerVisibilityChange,
   onFlatten,
   isProcessing,
+  onError,
 }) => {
   const [draggedLayer, setDraggedLayer] = useState(null);
 
@@ -67,6 +68,56 @@ const Layers = ({
     const layerOrder = visibleLayers.map((l) => l.id);
     await onFlatten(layerOrder);
     loadLayers();
+  };
+
+  const handleNewLayer = async () => {
+    if (!projectId) return;
+    try {
+      // Create a new empty transparent layer
+      const newLayer = {
+        id: `layer-${Date.now()}`,
+        name: `Layer ${layers.length + 1}`,
+        visible: true,
+        thumbnail: null,
+      };
+      setLayers([...layers, newLayer]);
+      setActiveLayer(newLayer.id);
+    } catch (err) {
+      onError?.(`Failed to create layer: ${err.message}`);
+    }
+  };
+
+  const handleDeleteLayer = async () => {
+    if (!projectId || activeLayer === 'background') return;
+    try {
+      const updatedLayers = layers.filter((l) => l.id !== activeLayer);
+      setLayers(updatedLayers);
+      setActiveLayer(updatedLayers.length > 0 ? updatedLayers[updatedLayers.length - 1].id : 'background');
+    } catch (err) {
+      onError?.(`Failed to delete layer: ${err.message}`);
+    }
+  };
+
+  const handleDuplicateLayer = async () => {
+    if (!projectId || activeLayer === 'background') return;
+    try {
+      const layerToDuplicate = layers.find((l) => l.id === activeLayer);
+      if (!layerToDuplicate) return;
+
+      const newLayer = {
+        ...layerToDuplicate,
+        id: `layer-${Date.now()}`,
+        name: `${layerToDuplicate.name} copy`,
+      };
+
+      const activeIndex = layers.findIndex((l) => l.id === activeLayer);
+      const updatedLayers = [...layers];
+      updatedLayers.splice(activeIndex + 1, 0, newLayer);
+      setLayers(updatedLayers);
+      setActiveLayer(newLayer.id);
+    } catch (err) {
+      onError?.(`Failed to duplicate layer: ${err.message}`);
+    }
   };
 
   return (
@@ -142,6 +193,7 @@ const Layers = ({
           className="layer-action-btn"
           disabled={isProcessing || !projectId}
           title="Add new empty layer"
+          onClick={handleNewLayer}
         >
           + New Layer
         </button>
@@ -149,6 +201,7 @@ const Layers = ({
           className="layer-action-btn"
           disabled={isProcessing || activeLayer === 'background'}
           title="Delete selected layer"
+          onClick={handleDeleteLayer}
         >
           Delete
         </button>
@@ -156,6 +209,7 @@ const Layers = ({
           className="layer-action-btn"
           disabled={isProcessing || activeLayer === 'background'}
           title="Duplicate selected layer"
+          onClick={handleDuplicateLayer}
         >
           Duplicate
         </button>

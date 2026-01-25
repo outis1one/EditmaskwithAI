@@ -26,6 +26,9 @@ function App() {
   const [layers, setLayers] = useState([]);
   const [activeLayer, setActiveLayer] = useState('background');
   const [generatedMask, setGeneratedMask] = useState(null);
+  const [advancedToolMode, setAdvancedToolMode] = useState(null); // 'smart-select', 'color-select', 'object-remove'
+  const [canvasZoom, setCanvasZoom] = useState(1);
+  const [externalSelection, setExternalSelection] = useState(null); // For smart-select/color-select polygon results
   const editsRef = useRef([]);
 
   // Create project and upload image
@@ -284,9 +287,49 @@ function App() {
   };
 
   // Handle mask generation from smart select / color select
-  const handleMaskGenerated = async (maskBlob, source) => {
-    setGeneratedMask({ blob: maskBlob, source });
-    // The mask can be used for various operations
+  const handleMaskGenerated = async (maskData, source) => {
+    setGeneratedMask({ data: maskData, source });
+    // Convert mask to selection if it contains polygon data
+    if (maskData && maskData.polygon && maskData.polygon.length > 0) {
+      // Set external selection for canvas to draw
+      setExternalSelection({
+        polygon: maskData.polygon,
+        bbox: maskData.bbox,
+      });
+      // Also set selection state for fix button
+      setSelection({
+        type: 'polygon',
+        bbox: maskData.bbox,
+        selectionData: { points: maskData.polygon },
+      });
+    }
+    // Reset tool mode after selection
+    setAdvancedToolMode(null);
+  };
+
+  // Handle canvas click for advanced tools (smart select, color select)
+  const handleAdvancedToolClick = async (x, y, color) => {
+    if (!project || !advancedToolMode) return;
+
+    try {
+      setIsProcessing(true);
+      setError(null);
+
+      if (advancedToolMode === 'smart-select') {
+        const result = await toolsApi.smartSelect(project.id, x, y);
+        handleMaskGenerated(result, 'smart-select');
+      } else if (advancedToolMode === 'color-select') {
+        // Color is passed from canvas click
+        if (color) {
+          const result = await toolsApi.colorSelect(project.id, color.r, color.g, color.b, 30);
+          handleMaskGenerated(result, 'color-select');
+        }
+      }
+    } catch (err) {
+      setError(`${advancedToolMode} failed: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Handle flatten layers
@@ -361,6 +404,11 @@ function App() {
                 imageUrl={currentImageUrl}
                 onSelectionChange={setSelection}
                 selectionMode={selectionMode}
+                advancedToolMode={advancedToolMode}
+                onAdvancedToolClick={handleAdvancedToolClick}
+                zoom={canvasZoom}
+                onZoomChange={setCanvasZoom}
+                externalSelection={externalSelection}
               />
             </div>
 
@@ -391,6 +439,8 @@ function App() {
                 isProcessing={isProcessing}
                 setIsProcessing={setIsProcessing}
                 setError={setError}
+                activeToolMode={advancedToolMode}
+                setActiveToolMode={setAdvancedToolMode}
               />
 
               <Layers
@@ -401,6 +451,7 @@ function App() {
                 setActiveLayer={setActiveLayer}
                 onFlatten={handleFlattenLayers}
                 isProcessing={isProcessing}
+                onError={setError}
               />
 
               <EyeCatalog
