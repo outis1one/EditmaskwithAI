@@ -86,4 +86,64 @@ export const editsApi = {
   },
 };
 
+export const patchesApi = {
+  // List all patches (eyes)
+  list: async (category = null, tags = null) => {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    if (tags) params.append('tags', tags);
+    const response = await api.get(`/patches/?${params.toString()}`);
+    return response.data;
+  },
+
+  // Get a specific patch
+  get: async (patchId) => {
+    const response = await api.get(`/patches/${patchId}`);
+    return response.data;
+  },
+
+  // Upload a new patch (eye)
+  create: async (name, file, category = 'eyes', tags = '') => {
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('source_type', 'imported');
+    formData.append('category', category);
+    formData.append('tags', tags);
+    formData.append('file', file);
+
+    const response = await api.post('/patches/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  // Apply a patch to the project
+  apply: async (projectId, patchId, bbox, featherPx = 5) => {
+    const formData = new FormData();
+    formData.append('project_id', projectId);
+    formData.append('patch_id', patchId);
+    formData.append('bbox', JSON.stringify(bbox));
+    formData.append('feather_px', featherPx);
+
+    const response = await api.post('/patches/apply', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  // Delete a patch
+  delete: async (patchId) => {
+    const response = await api.delete(`/patches/${patchId}`);
+    return response.data;
+  },
+
+  // Get patch image URL
+  getImageUrl: (patchId, thumbnail = false) =>
+    `${API_BASE_URL}/patches/${patchId}/image${thumbnail ? '?thumbnail=true' : ''}`,
+};
+
 export default api;

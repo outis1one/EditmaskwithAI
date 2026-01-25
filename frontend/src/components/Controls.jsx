@@ -11,7 +11,6 @@ const Controls = ({
   prompt,
   onPromptChange,
   onFix,
-  onClear,
   onDownload,
   isProcessing,
   hasSelection,
@@ -106,13 +105,6 @@ const Controls = ({
           disabled={isProcessing || !hasSelection || !prompt.trim()}
         >
           {isProcessing ? 'Processing...' : 'Fix Selected Area'}
-        </button>
-        <button
-          className="clear-btn"
-          onClick={onClear}
-          disabled={isProcessing}
-        >
-          Clear Selection
         </button>
       </div>
 
