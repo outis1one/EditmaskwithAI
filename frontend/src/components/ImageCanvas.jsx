@@ -32,10 +32,10 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
         // Re-center and rescale the image if it exists
         const bgImage = canvas.backgroundImage;
         if (bgImage) {
+          // Allow scaling up to fill the canvas
           const scale = Math.min(
             (width - 40) / bgImage.width,
-            (height - 40) / bgImage.height,
-            1
+            (height - 40) / bgImage.height
           );
           bgImage.scale(scale);
           bgImage.set({
@@ -290,7 +290,7 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
   };
 
   const setupLassoMode = (canvas) => {
-    let line, points = [];
+    let polygon, points = [], drawingLine;
 
     canvas.on('mouse:down', (e) => {
       // If clicking on existing selection, enable transform mode
@@ -314,23 +314,16 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
       const pointer = canvas.getPointer(e.e);
       points = [{ x: pointer.x, y: pointer.y }];
 
-      line = new fabric.Polyline(points, {
-        fill: 'rgba(255, 255, 255, 0.3)',
+      // Create a temporary line for visual feedback while drawing
+      drawingLine = new fabric.Polyline(points, {
+        fill: 'transparent',
         stroke: '#00ff00',
         strokeWidth: 2,
-        selectable: true,
-        hasControls: true,
-        hasBorders: true,
-        lockRotation: false,
-        cornerColor: '#00ff00',
-        cornerSize: 10,
-        transparentCorners: false,
-        borderColor: '#00ff00',
-        borderScaleFactor: 2,
+        selectable: false,
+        evented: false,
       });
 
-      canvas.add(line);
-      setCurrentSelection(line);
+      canvas.add(drawingLine);
     });
 
     canvas.on('mouse:move', (e) => {
@@ -339,16 +332,50 @@ const ImageCanvas = ({ imageUrl, onSelectionChange, selectionMode }) => {
       const pointer = canvas.getPointer(e.e);
       points.push({ x: pointer.x, y: pointer.y });
 
-      line.set({ points: points });
+      // Remove old line and create new one with updated points
+      canvas.remove(drawingLine);
+      drawingLine = new fabric.Polyline([...points], {
+        fill: 'transparent',
+        stroke: '#00ff00',
+        strokeWidth: 2,
+        selectable: false,
+        evented: false,
+      });
+      canvas.add(drawingLine);
       canvas.renderAll();
     });
 
     canvas.on('mouse:up', () => {
-      if (isDrawing && !isTransformMode) {
+      if (isDrawing && !isTransformMode && points.length > 2) {
         setIsDrawing(false);
-        lassoPoints.current = points;
-        canvas.setActiveObject(line);
-        updateSelection(line, 'lasso');
+        lassoPoints.current = [...points];
+
+        // Remove drawing line
+        canvas.remove(drawingLine);
+
+        // Create final polygon with fill
+        polygon = new fabric.Polygon(points, {
+          fill: 'rgba(255, 255, 255, 0.3)',
+          stroke: '#00ff00',
+          strokeWidth: 2,
+          selectable: true,
+          hasControls: true,
+          hasBorders: true,
+          lockRotation: false,
+          cornerColor: '#00ff00',
+          cornerSize: 10,
+          transparentCorners: false,
+          borderColor: '#00ff00',
+          borderScaleFactor: 2,
+        });
+
+        canvas.add(polygon);
+        canvas.setActiveObject(polygon);
+        setCurrentSelection(polygon);
+        updateSelection(polygon, 'lasso');
+      } else if (isDrawing) {
+        setIsDrawing(false);
+        canvas.remove(drawingLine);
       }
     });
 

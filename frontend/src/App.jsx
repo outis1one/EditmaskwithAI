@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ImageCanvas from './components/ImageCanvas';
 import Controls from './components/Controls';
 import History from './components/History';
+import EyeCatalog from './components/EyeCatalog';
 import { projectsApi, editsApi } from './utils/api';
 import './App.css';
 
@@ -144,7 +145,7 @@ function App() {
   };
 
   // Handle revert
-  const handleRevert = async (editId) => {
+  const handleRevert = useCallback(async (editId) => {
     if (!project) return;
 
     try {
@@ -162,10 +163,10 @@ function App() {
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [project]);
 
   // Handle reset
-  const handleReset = async () => {
+  const handleReset = useCallback(async () => {
     if (!project) return;
 
     try {
@@ -183,7 +184,7 @@ function App() {
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [project]);
 
   // Handle download
   const handleDownload = async () => {
@@ -225,7 +226,7 @@ function App() {
       await handleRevert(previousEdit.id);
       setCurrentEditIndex(currentEditIndex - 1);
     }
-  }, [project, isProcessing, currentEditIndex]);
+  }, [project, isProcessing, currentEditIndex, handleReset, handleRevert]);
 
   // Handle redo (Ctrl+Y)
   const handleRedo = useCallback(async () => {
@@ -237,7 +238,7 @@ function App() {
     const nextEdit = completedEdits[currentEditIndex + 1];
     await handleRevert(nextEdit.id);
     setCurrentEditIndex(currentEditIndex + 1);
-  }, [project, isProcessing, currentEditIndex]);
+  }, [project, isProcessing, currentEditIndex, handleRevert]);
 
   // Keyboard shortcut handler
   useEffect(() => {
@@ -343,10 +344,21 @@ function App() {
                 prompt={prompt}
                 onPromptChange={setPrompt}
                 onFix={handleFix}
-                onClear={() => setSelection(null)}
                 onDownload={handleDownload}
                 isProcessing={isProcessing}
                 hasSelection={!!selection}
+              />
+
+              <EyeCatalog
+                projectId={project?.id}
+                selection={selection}
+                feather={feather}
+                onApply={async () => {
+                  // Reload image after applying eye
+                  setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
+                  await loadEdits(project.id);
+                }}
+                isProcessing={isProcessing}
               />
 
               <div className="history-wrapper">
