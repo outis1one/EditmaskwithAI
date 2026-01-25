@@ -3,9 +3,10 @@
 # AI Photo Edit - Container Startup Script
 # =============================================================================
 # This script runs when the container starts. It:
-# 1. Downloads sample eye images if the catalog is empty
-# 2. Ensures all directories exist
-# 3. Starts the FastAPI server
+# 1. Initializes the database
+# 2. Downloads SAM model automatically (can be disabled with AUTO_DOWNLOAD_SAM=false)
+# 3. Downloads sample eye images if the catalog is empty
+# 4. Starts the FastAPI server
 # =============================================================================
 
 set -e
@@ -18,18 +19,15 @@ echo "=========================================="
 mkdir -p /app/data/projects
 mkdir -p /app/data/patches
 mkdir -p /app/data/models
+mkdir -p /app/data/patch_library
 
-# Check if eye catalog needs to be populated
-echo "Checking eye catalog..."
-PATCHES_COUNT=$(find /app/data/patches -maxdepth 1 -type d | wc -l)
+# Initialize database FIRST (before eye import)
+echo ""
+echo "Initializing database..."
+echo "------------------------------------------"
+cd /app && python /scripts/init_database.py || echo "Warning: Database init failed (non-fatal)"
 
-if [ "$PATCHES_COUNT" -le 1 ]; then
-    echo "Eye catalog is empty. Downloading sample eyes..."
-    python /scripts/download_sample_eyes.py || echo "Warning: Could not download sample eyes (non-fatal)"
-else
-    echo "Eye catalog has content, skipping download."
-fi
-
+# Check and download SAM model automatically
 echo ""
 echo "Checking SAM model (Smart Select)..."
 echo "------------------------------------------"
@@ -39,17 +37,42 @@ if [ -f "/app/data/models/sam_model.pth" ] || \
    [ -f "/app/data/models/sam_vit_h_4b8939.pth" ]; then
     echo "✓ SAM model found - Smart Select will use local AI (free, offline)"
 else
-    echo ""
-    echo "⚠ SAM model not found"
-    echo ""
-    echo "  Smart Select will use Replicate API (requires REPLICATE_API_KEY)"
-    echo ""
-    echo "  To enable FREE offline Smart Select, run:"
-    echo "    docker exec -it ai-photo-edit-backend python /scripts/download_sam_model.py"
-    echo ""
-    echo "  Model sizes: vit_b (375MB), vit_l (1.2GB), vit_h (2.5GB)"
-    echo "  The model persists across container rebuilds."
-    echo ""
+    # Auto-download SAM unless explicitly disabled
+    AUTO_DOWNLOAD_SAM="${AUTO_DOWNLOAD_SAM:-true}"
+    if [ "$AUTO_DOWNLOAD_SAM" = "true" ]; then
+        echo "SAM model not found. Downloading automatically..."
+        echo "(This is a one-time ~375MB download that persists across rebuilds)"
+        echo ""
+        python /scripts/download_sam_model.py vit_b || {
+            echo ""
+            echo "⚠ SAM download failed (non-fatal)"
+            echo "  Smart Select will fall back to Replicate API (requires REPLICATE_API_KEY)"
+            echo "  To retry later: docker exec -it ai-photo-edit-backend python /scripts/download_sam_model.py"
+        }
+    else
+        echo ""
+        echo "⚠ SAM model not found (AUTO_DOWNLOAD_SAM=false)"
+        echo ""
+        echo "  Smart Select will use Replicate API (requires REPLICATE_API_KEY)"
+        echo ""
+        echo "  To enable FREE offline Smart Select, run:"
+        echo "    docker exec -it ai-photo-edit-backend python /scripts/download_sam_model.py"
+        echo ""
+    fi
+fi
+
+# Check if eye catalog needs to be populated
+echo ""
+echo "Checking eye catalog..."
+echo "------------------------------------------"
+PATCHES_COUNT=$(find /app/data/patches -maxdepth 1 -type d 2>/dev/null | wc -l)
+DB_PATCHES_COUNT=$(sqlite3 /app/data/ai_photo_edit.db "SELECT COUNT(*) FROM patches;" 2>/dev/null || echo "0")
+
+if [ "$DB_PATCHES_COUNT" = "0" ] || [ "$PATCHES_COUNT" -le 1 ]; then
+    echo "Eye catalog is empty. Downloading sample eyes..."
+    cd /app && python /scripts/download_sample_eyes.py || echo "Warning: Could not download sample eyes (non-fatal)"
+else
+    echo "✓ Eye catalog has $DB_PATCHES_COUNT patches"
 fi
 
 echo ""

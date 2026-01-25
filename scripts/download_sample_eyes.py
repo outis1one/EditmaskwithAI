@@ -106,17 +106,34 @@ def import_eye_to_database(db_path: Path, eye_data: dict, patch_path: str, thumb
     return patch_id
 
 def main():
-    # Determine paths
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent
-    data_dir = project_root / 'data'
-    db_path = data_dir / 'photoedit.db'
+    # Determine paths - handle both Docker and local environments
+    # In Docker: script is at /scripts/, data is at /app/data/
+    # Locally: script is at ./scripts/, data is at ./data/
+    docker_data_dir = Path('/app/data')
+    local_data_dir = Path(__file__).parent.parent / 'data'
+
+    if docker_data_dir.exists():
+        data_dir = docker_data_dir
+    else:
+        data_dir = local_data_dir
+
+    db_path = data_dir / 'ai_photo_edit.db'
 
     # Check if database exists
     if not db_path.exists():
         print(f"Database not found at {db_path}")
-        print("Please start the backend first to initialize the database.")
-        sys.exit(1)
+        print("Attempting to initialize database...")
+        # Try to import and initialize database
+        try:
+            sys.path.insert(0, str(Path('/app')))
+            sys.path.insert(0, str(Path(__file__).parent.parent / 'backend'))
+            from app.database import init_db
+            init_db()
+            print("Database initialized successfully.")
+        except Exception as e:
+            print(f"Could not initialize database: {e}")
+            print("Please start the backend first to initialize the database.")
+            sys.exit(1)
 
     print(f"Using database: {db_path}")
     print(f"Data directory: {data_dir}")
