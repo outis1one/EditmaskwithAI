@@ -172,15 +172,124 @@ async def smart_select(
     )
 
 
+# Global SAM model cache (loaded once, reused)
+_sam_model = None
+_sam_predictor = None
+
+
+def _get_sam_model():
+    """Load SAM model from local file (cached after first load)"""
+    global _sam_model, _sam_predictor
+
+    if _sam_predictor is not None:
+        return _sam_predictor
+
+    from pathlib import Path
+
+    # Check for SAM model in models directory
+    models_dir = Path('/app/data/models')
+    model_path = models_dir / 'sam_model.pth'
+
+    # Also check for specific model files
+    if not model_path.exists():
+        for filename in ['sam_vit_b_01ec64.pth', 'sam_vit_l_0b3195.pth', 'sam_vit_h_4b8939.pth']:
+            alt_path = models_dir / filename
+            if alt_path.exists():
+                model_path = alt_path
+                break
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"SAM model not found. Download it with:\n"
+            f"  docker exec -it ai-photo-edit-backend python /scripts/download_sam_model.py"
+        )
+
+    # Determine model type from filename
+    model_type = 'vit_b'  # default
+    if 'vit_l' in model_path.name:
+        model_type = 'vit_l'
+    elif 'vit_h' in model_path.name:
+        model_type = 'vit_h'
+
+    print(f"Loading SAM model: {model_path} (type: {model_type})")
+
+    import torch
+    from segment_anything import sam_model_registry, SamPredictor
+
+    # Use CPU by default (works everywhere), GPU if available
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    _sam_model = sam_model_registry[model_type](checkpoint=str(model_path))
+    _sam_model.to(device)
+    _sam_predictor = SamPredictor(_sam_model)
+
+    print(f"SAM model loaded on {device}")
+    return _sam_predictor
+
+
+def _sam_select_local(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
+    """Use local SAM model for selection (no API calls, runs offline)"""
+    predictor = _get_sam_model()
+
+    # Set image
+    predictor.set_image(img_array)
+
+    # Point coordinates (x, y) and label (1 = foreground)
+    input_point = np.array([[x, y]])
+    input_label = np.array([1])
+
+    # Get mask prediction
+    masks, scores, _ = predictor.predict(
+        point_coords=input_point,
+        point_labels=input_label,
+        multimask_output=True,  # Get multiple mask options
+    )
+
+    # Use the mask with highest score
+    best_mask_idx = np.argmax(scores)
+    mask = masks[best_mask_idx]
+
+    return mask.astype(np.uint8)
+
+
 async def _sam_select(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
-    """Use Segment Anything Model for selection via Replicate API"""
+    """
+    Smart object selection using SAM (Segment Anything Model).
+
+    Priority:
+    1. Local SAM model (free, fast, offline)
+    2. Replicate API (if local not available and API key set)
+    3. Raises exception if neither available
+    """
+    # Try local SAM first (free, no API calls)
+    try:
+        return _sam_select_local(img_array, x, y)
+    except FileNotFoundError as e:
+        print(f"Local SAM not available: {e}")
+    except ImportError as e:
+        print(f"SAM dependencies not installed: {e}")
+    except Exception as e:
+        print(f"Local SAM failed: {e}")
+
+    # Fall back to Replicate API
+    from app.config import settings
+
+    if not settings.replicate_api_key:
+        raise ValueError(
+            "SAM model not available. Either:\n"
+            "  1. Download local model: docker exec -it ai-photo-edit-backend python /scripts/download_sam_model.py\n"
+            "  2. Or set REPLICATE_API_KEY in .env for cloud SAM"
+        )
+
+    return await _sam_select_replicate(img_array, x, y)
+
+
+async def _sam_select_replicate(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
+    """Fallback: Use SAM via Replicate API (requires API key, costs ~$0.002/call)"""
     import httpx
     import base64
     import asyncio
     from app.config import settings
-
-    if not settings.replicate_api_key:
-        raise ValueError("REPLICATE_API_KEY not configured")
 
     # Convert image to base64
     img = Image.fromarray(img_array)
@@ -188,15 +297,13 @@ async def _sam_select(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
     img.save(buffer, format='PNG')
     img_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-    # Call SAM via Replicate
     async with httpx.AsyncClient(timeout=120.0) as client:
-        # Use SAM model on Replicate
         prediction_data = {
             "version": "meta/sam-2-image:fe97b453d6525baeeb530595c74a3c4f567c1f655ee2a0fee11f76bd1d31e495",
             "input": {
                 "image": f"data:image/png;base64,{img_b64}",
                 "point_coords": f"{x},{y}",
-                "point_labels": "1",  # 1 = foreground point
+                "point_labels": "1",
             }
         }
 
@@ -205,7 +312,6 @@ async def _sam_select(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
             'Content-Type': 'application/json'
         }
 
-        # Start prediction
         response = await client.post(
             "https://api.replicate.com/v1/predictions",
             json=prediction_data,
@@ -216,20 +322,15 @@ async def _sam_select(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
             raise Exception(f"Replicate API error: {response.text}")
 
         prediction = response.json()
+        prediction_url = prediction['urls']['get']
 
         # Poll for completion
-        prediction_url = prediction['urls']['get']
-        max_attempts = 60
-        attempt = 0
-
-        while attempt < max_attempts:
+        for _ in range(60):
             await asyncio.sleep(2)
-
             status_response = await client.get(prediction_url, headers=headers)
             status_data = status_response.json()
 
             if status_data['status'] == 'succeeded':
-                # Download mask image
                 mask_url = status_data['output']
                 if isinstance(mask_url, list):
                     mask_url = mask_url[0]
@@ -237,19 +338,16 @@ async def _sam_select(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
                 mask_response = await client.get(mask_url)
                 mask_img = Image.open(BytesIO(mask_response.content)).convert('L')
 
-                # Resize if needed
                 if mask_img.size != (img_array.shape[1], img_array.shape[0]):
                     mask_img = mask_img.resize(
                         (img_array.shape[1], img_array.shape[0]),
                         Image.Resampling.LANCZOS
                     )
 
-                return np.array(mask_img) // 255  # Normalize to 0-1
+                return np.array(mask_img) // 255
 
             elif status_data['status'] == 'failed':
                 raise Exception(f"SAM prediction failed: {status_data.get('error')}")
-
-            attempt += 1
 
         raise Exception("SAM prediction timed out")
 

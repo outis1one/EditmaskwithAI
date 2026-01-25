@@ -25,11 +25,15 @@ RUN python -c "from rembg import remove; print('rembg model downloaded')" || tru
 # Copy application
 COPY . .
 
+# Copy entrypoint script and make it executable
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create data directories
 RUN mkdir -p /app/data/projects /app/data/patches /app/data/models
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use entrypoint script (auto-populates eyes on first run, then starts server)
+ENTRYPOINT ["/entrypoint.sh"]
