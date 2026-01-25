@@ -1,0 +1,63 @@
+# ==============================================================================
+# AI Photo Edit - Unified Container
+# Builds React frontend and serves it alongside FastAPI backend
+# ==============================================================================
+
+# Stage 1: Build React frontend
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /frontend
+
+# Copy package files and install dependencies
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+
+# Copy frontend source and build
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Python backend with frontend static files
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies for OpenCV, rembg, SAM, and image processing
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    wget \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download rembg model (u2net) to avoid first-run delay
+RUN python -c "from rembg import remove; print('rembg model downloaded')" || true
+
+# Copy backend application
+COPY backend/ .
+
+# Copy entrypoint script
+COPY backend/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Copy scripts
+COPY scripts/ /scripts/
+
+# Copy built frontend from stage 1
+COPY --from=frontend-build /frontend/dist /app/static
+
+# Create data directories
+RUN mkdir -p /app/data/projects /app/data/patches /app/data/models
+
+# Expose port
+EXPOSE 8000
+
+# Use entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]

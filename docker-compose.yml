@@ -1,16 +1,13 @@
-version: '3.8'
-
 services:
-  backend:
+  app:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile
-    container_name: ai-photo-edit-backend
+    container_name: ai-photo-edit
     ports:
-      - "8101:8000"  # External 8101, internal 8000
+      - "3080:8000"
     volumes:
       - ./data:/app/data
-      - ./backend:/app
       - ./scripts:/scripts
     environment:
       - DATABASE_URL=sqlite:///./data/ai_photo_edit.db
@@ -19,27 +16,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - STABILITY_API_KEY=${STABILITY_API_KEY:-}
       - REPLICATE_API_KEY=${REPLICATE_API_KEY:-}
-      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost
+      - CORS_ORIGINS=*
     restart: unless-stopped
-    networks:
-      - ai-photo-edit-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: ai-photo-edit-frontend
-    ports:
-      - "3080:80"  # Frontend on port 3080
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - ai-photo-edit-network
-
-networks:
-  ai-photo-edit-network:
-    driver: bridge
 
 volumes:
   data:
