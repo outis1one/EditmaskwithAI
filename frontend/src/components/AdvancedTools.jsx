@@ -11,8 +11,9 @@ const AdvancedTools = ({
   isProcessing,
   setIsProcessing,
   setError,
+  activeToolMode,
+  setActiveToolMode,
 }) => {
-  const [activeToolMode, setActiveToolMode] = useState(null);
   const [colorTolerance, setColorTolerance] = useState(30);
 
   const handleRemoveBackground = async () => {
