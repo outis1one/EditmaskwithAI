@@ -173,10 +173,85 @@ async def smart_select(
 
 
 async def _sam_select(img_array: np.ndarray, x: int, y: int) -> np.ndarray:
-    """Use Segment Anything Model for selection"""
-    # This would require SAM to be installed and model downloaded
-    # For now, raise to fall back to flood fill
-    raise NotImplementedError("SAM integration pending")
+    """Use Segment Anything Model for selection via Replicate API"""
+    import httpx
+    import base64
+    import asyncio
+    from app.config import settings
+
+    if not settings.replicate_api_key:
+        raise ValueError("REPLICATE_API_KEY not configured")
+
+    # Convert image to base64
+    img = Image.fromarray(img_array)
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
+    img_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+    # Call SAM via Replicate
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Use SAM model on Replicate
+        prediction_data = {
+            "version": "meta/sam-2-image:fe97b453d6525baeeb530595c74a3c4f567c1f655ee2a0fee11f76bd1d31e495",
+            "input": {
+                "image": f"data:image/png;base64,{img_b64}",
+                "point_coords": f"{x},{y}",
+                "point_labels": "1",  # 1 = foreground point
+            }
+        }
+
+        headers = {
+            'Authorization': f'Bearer {settings.replicate_api_key}',
+            'Content-Type': 'application/json'
+        }
+
+        # Start prediction
+        response = await client.post(
+            "https://api.replicate.com/v1/predictions",
+            json=prediction_data,
+            headers=headers
+        )
+
+        if response.status_code != 201:
+            raise Exception(f"Replicate API error: {response.text}")
+
+        prediction = response.json()
+
+        # Poll for completion
+        prediction_url = prediction['urls']['get']
+        max_attempts = 60
+        attempt = 0
+
+        while attempt < max_attempts:
+            await asyncio.sleep(2)
+
+            status_response = await client.get(prediction_url, headers=headers)
+            status_data = status_response.json()
+
+            if status_data['status'] == 'succeeded':
+                # Download mask image
+                mask_url = status_data['output']
+                if isinstance(mask_url, list):
+                    mask_url = mask_url[0]
+
+                mask_response = await client.get(mask_url)
+                mask_img = Image.open(BytesIO(mask_response.content)).convert('L')
+
+                # Resize if needed
+                if mask_img.size != (img_array.shape[1], img_array.shape[0]):
+                    mask_img = mask_img.resize(
+                        (img_array.shape[1], img_array.shape[0]),
+                        Image.Resampling.LANCZOS
+                    )
+
+                return np.array(mask_img) // 255  # Normalize to 0-1
+
+            elif status_data['status'] == 'failed':
+                raise Exception(f"SAM prediction failed: {status_data.get('error')}")
+
+            attempt += 1
+
+        raise Exception("SAM prediction timed out")
 
 
 def _flood_fill_select(img_array: np.ndarray, x: int, y: int, tolerance: int = 32) -> np.ndarray:
