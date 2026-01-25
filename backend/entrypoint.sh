@@ -30,6 +30,29 @@ else
     echo "Eye catalog has content, skipping download."
 fi
 
+echo ""
+echo "Checking SAM model (Smart Select)..."
+echo "------------------------------------------"
+if [ -f "/app/data/models/sam_model.pth" ] || \
+   [ -f "/app/data/models/sam_vit_b_01ec64.pth" ] || \
+   [ -f "/app/data/models/sam_vit_l_0b3195.pth" ] || \
+   [ -f "/app/data/models/sam_vit_h_4b8939.pth" ]; then
+    echo "✓ SAM model found - Smart Select will use local AI (free, offline)"
+else
+    echo ""
+    echo "⚠ SAM model not found"
+    echo ""
+    echo "  Smart Select will use Replicate API (requires REPLICATE_API_KEY)"
+    echo ""
+    echo "  To enable FREE offline Smart Select, run:"
+    echo "    docker exec -it ai-photo-edit-backend python /scripts/download_sam_model.py"
+    echo ""
+    echo "  Model sizes: vit_b (375MB), vit_l (1.2GB), vit_h (2.5GB)"
+    echo "  The model persists across container rebuilds."
+    echo ""
+fi
+
+echo ""
 echo "=========================================="
 echo "Starting FastAPI server..."
 echo "=========================================="
