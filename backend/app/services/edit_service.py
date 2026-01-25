@@ -188,9 +188,11 @@ class EditService:
         if not result_path.exists():
             raise FileNotFoundError(f"Edit {edit_id} result not found")
 
-        # Copy result to current
+        # Copy result to current (preserve alpha channel)
         current_path = self.get_current_image_path(project_id)
-        Image.open(result_path).save(current_path)
+        img = Image.open(result_path)
+        # Preserve original mode to maintain transparency
+        img.save(current_path, format='PNG')
 
         return str(current_path)
 
@@ -210,7 +212,9 @@ class EditService:
         if not original_path.exists():
             raise FileNotFoundError(f"Original image for project {project_id} not found")
 
-        # Copy original to current
-        Image.open(original_path).save(current_path)
+        # Copy original to current (preserve alpha channel)
+        img = Image.open(original_path)
+        # Preserve original mode to maintain transparency
+        img.save(current_path, format='PNG')
 
         return str(current_path)

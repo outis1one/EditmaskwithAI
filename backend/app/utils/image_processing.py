@@ -55,19 +55,22 @@ def blend_patch(
     original_patch: Image.Image,
     regenerated_patch: Image.Image,
     mask: Image.Image,
-    feather_px: int = 0
+    feather_px: int = 0,
+    preserve_alpha: bool = True
 ) -> Image.Image:
     """
-    Blend regenerated patch with original using mask
+    Blend regenerated patch with original using mask.
+    Preserves original alpha channel for semi-transparent areas (veils, glass, etc).
 
     Args:
         original_patch: Original cropped patch
         regenerated_patch: AI-regenerated patch
         mask: Binary mask (same size as patches)
         feather_px: Feather radius for smooth blending
+        preserve_alpha: If True, preserves original alpha channel
 
     Returns:
-        Blended patch
+        Blended patch with preserved transparency
     """
     # Ensure all images are the same size
     if regenerated_patch.size != original_patch.size:
@@ -83,12 +86,20 @@ def blend_patch(
     # Apply feathering to mask
     feathered_mask = create_feathered_mask(mask, feather_px)
 
-    # Convert images to RGBA
-    original_patch = original_patch.convert('RGBA')
-    regenerated_patch = regenerated_patch.convert('RGBA')
+    # Convert images to RGBA, storing original alpha
+    original_rgba = original_patch.convert('RGBA')
+    original_alpha = original_rgba.split()[3]  # Store original alpha channel
+
+    regenerated_rgba = regenerated_patch.convert('RGBA')
 
     # Blend using the feathered mask
-    blended = Image.composite(regenerated_patch, original_patch, feathered_mask)
+    blended = Image.composite(regenerated_rgba, original_rgba, feathered_mask)
+
+    # Restore original alpha channel to preserve transparency
+    # This keeps semi-transparent areas (veils, glass, smoke) intact
+    if preserve_alpha:
+        r, g, b, _ = blended.split()
+        blended = Image.merge('RGBA', (r, g, b, original_alpha))
 
     return blended
 

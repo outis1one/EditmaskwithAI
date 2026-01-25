@@ -14,3 +14,5 @@ pydantic-settings==2.1.0
 email-validator==2.1.0
 opencv-python-headless==4.9.0.80
 scikit-image==0.22.0
+rembg==2.0.50
+onnxruntime==1.16.3
