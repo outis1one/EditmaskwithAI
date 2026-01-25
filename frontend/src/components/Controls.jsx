@@ -12,6 +12,7 @@ const Controls = ({
   onPromptChange,
   onFix,
   onClear,
+  onDownload,
   isProcessing,
   hasSelection,
 }) => {
@@ -112,6 +113,16 @@ const Controls = ({
           disabled={isProcessing}
         >
           Clear Selection
+        </button>
+      </div>
+
+      <div className="control-section">
+        <button
+          className="download-btn"
+          onClick={onDownload}
+          disabled={isProcessing}
+        >
+          Download Image
         </button>
       </div>
     </div>
