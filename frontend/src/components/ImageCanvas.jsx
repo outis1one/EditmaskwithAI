@@ -16,9 +16,12 @@ const ImageCanvas = forwardRef(({
   const [currentSelection, setCurrentSelection] = useState(null);
   const currentSelectionRef = useRef(null);
   const lassoPoints = useRef([]);
-  const isDrawingRef = useRef(false);
-  const imageRef = useRef(null);
-  const baseScaleRef = useRef(1);
+  const onZoomChangeRef = useRef(onZoomChange);
+
+  // Keep ref updated
+  useEffect(() => {
+    onZoomChangeRef.current = onZoomChange;
+  }, [onZoomChange]);
 
   // Expose methods to parent
   useImperativeHandle(ref, () => ({
@@ -83,7 +86,9 @@ const ImageCanvas = forwardRef(({
       canvas.zoomToPoint({ x: pointer.x, y: pointer.y }, newZoom);
 
       setCurrentZoom(newZoom);
-      onZoomChange?.(newZoom);
+      if (onZoomChangeRef.current) {
+        onZoomChangeRef.current(newZoom);
+      }
     };
 
     canvas.on('mouse:wheel', handleWheel);
@@ -93,7 +98,7 @@ const ImageCanvas = forwardRef(({
       canvas.off('mouse:wheel', handleWheel);
       canvas.dispose();
     };
-  }, [onZoomChange]);
+  }, []); // Empty dependency array - only run once on mount
 
   // Center and scale image
   const centerImage = (canvas, img, zoomFactor) => {
