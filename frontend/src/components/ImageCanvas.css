@@ -12,7 +12,33 @@
   display: block;
 }
 
-/* Selection hint */
+.canvas-controls {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.canvas-controls > * {
+  pointer-events: auto;
+}
+
+.clear-selection-btn {
+  background-color: #ff4444;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+}
+
+.clear-selection-btn:hover {
+  background-color: #cc0000;
+}
+
 .selection-hint {
   position: absolute;
   bottom: 40px;
@@ -49,16 +75,12 @@
 
 /* Zoom controls */
 .zoom-controls {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
   display: flex;
   align-items: center;
   gap: 4px;
   background-color: rgba(0, 0, 0, 0.8);
   padding: 6px 10px;
   border-radius: 4px;
-  z-index: 10;
 }
 
 .zoom-controls button {
