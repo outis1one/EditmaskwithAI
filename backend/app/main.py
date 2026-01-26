@@ -63,14 +63,25 @@ def health():
 STATIC_DIR = Path("/app/static")
 
 
-# Serve static assets (JS, CSS, images)
+# Serve static assets - mount subdirectories if they exist
 if STATIC_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    # React-style assets folder
+    if (STATIC_DIR / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    # miniPaint dist folder (webpack bundle)
+    if (STATIC_DIR / "dist").exists():
+        app.mount("/dist", StaticFiles(directory=STATIC_DIR / "dist"), name="dist")
+    # miniPaint images folder
+    if (STATIC_DIR / "images").exists():
+        app.mount("/images", StaticFiles(directory=STATIC_DIR / "images"), name="images")
+    # miniPaint CSS folder
+    if (STATIC_DIR / "src").exists():
+        app.mount("/src", StaticFiles(directory=STATIC_DIR / "src"), name="src")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_spa():
-    """Serve React SPA index.html"""
+    """Serve miniPaint index.html"""
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
@@ -80,7 +91,7 @@ async def serve_spa():
 @app.get("/{full_path:path}")
 async def serve_spa_routes(request: Request, full_path: str):
     """
-    Catch-all route for React Router (SPA).
+    Catch-all route for serving static files.
     Serves static files if they exist, otherwise returns index.html.
     """
     # Don't catch API routes
@@ -92,7 +103,7 @@ async def serve_spa_routes(request: Request, full_path: str):
     if static_file.exists() and static_file.is_file():
         return FileResponse(static_file)
 
-    # Otherwise serve index.html for React Router
+    # Otherwise serve index.html
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
