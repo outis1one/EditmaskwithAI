@@ -6,6 +6,8 @@ from PIL import Image
 from io import BytesIO
 import numpy as np
 import json
+import base64
+import cv2
 
 from app.database import get_db
 from app.models.project import Project
@@ -133,11 +135,12 @@ async def smart_select(
     project_id: int = Form(...),
     point_x: int = Form(...),
     point_y: int = Form(...),
+    return_format: str = Form("json"),  # "json" (default) or "image"
     db: Session = Depends(get_db)
 ):
     """
     Use SAM (Segment Anything) to select object at given point.
-    Returns mask for the selected object.
+    Returns mask and polygon data for the selected object.
 
     Note: Requires SAM model to be downloaded.
     Falls back to simple flood-fill selection if SAM unavailable.
@@ -163,13 +166,62 @@ async def smart_select(
     # Convert mask to PNG
     mask_img = Image.fromarray((mask * 255).astype(np.uint8), mode='L')
 
+    if return_format == "image":
+        buffer = BytesIO()
+        mask_img.save(buffer, format='PNG')
+        return Response(
+            content=buffer.getvalue(),
+            media_type="image/png"
+        )
+
+    # Return JSON with polygon and bbox
+    polygon, bbox = _mask_to_polygon(mask)
+
+    # Also return mask as base64 for potential use
     buffer = BytesIO()
     mask_img.save(buffer, format='PNG')
+    mask_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-    return Response(
-        content=buffer.getvalue(),
-        media_type="image/png"
-    )
+    return {
+        "polygon": polygon,
+        "bbox": bbox,
+        "mask_base64": mask_b64,
+    }
+
+
+def _mask_to_polygon(mask: np.ndarray) -> tuple:
+    """
+    Convert a binary mask to a simplified polygon and bounding box.
+
+    Returns:
+        (polygon, bbox) where:
+        - polygon: list of [x, y] points (simplified contour)
+        - bbox: dict with x, y, width, height
+    """
+    # Ensure mask is binary uint8
+    mask_uint8 = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
+
+    # Find contours
+    contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return [], {"x": 0, "y": 0, "width": 0, "height": 0}
+
+    # Get largest contour
+    largest = max(contours, key=cv2.contourArea)
+
+    # Get bounding box
+    x, y, w, h = cv2.boundingRect(largest)
+    bbox = {"x": int(x), "y": int(y), "width": int(w), "height": int(h)}
+
+    # Simplify contour to reduce points (epsilon = 1% of arc length)
+    epsilon = 0.01 * cv2.arcLength(largest, True)
+    simplified = cv2.approxPolyDP(largest, epsilon, True)
+
+    # Convert to list of [x, y] points
+    polygon = [[int(pt[0][0]), int(pt[0][1])] for pt in simplified]
+
+    return polygon, bbox
 
 
 # Global SAM model cache (loaded once, reused)
@@ -387,11 +439,12 @@ async def color_select(
     color_g: int = Form(...),
     color_b: int = Form(...),
     tolerance: int = Form(30),
+    return_format: str = Form("json"),  # "json" (default) or "image"
     db: Session = Depends(get_db)
 ):
     """
     Select all pixels similar to the given color.
-    Returns a mask of selected areas.
+    Returns a mask and polygon data for selected areas.
     """
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -412,18 +465,33 @@ async def color_select(
     distance = np.sum(diff, axis=2)
 
     # Create mask where distance is within tolerance
-    mask = (distance <= tolerance * 3).astype(np.uint8) * 255
+    mask = (distance <= tolerance * 3).astype(np.uint8)
 
     # Convert to PNG
-    mask_img = Image.fromarray(mask, mode='L')
+    mask_img = Image.fromarray(mask * 255, mode='L')
+
+    if return_format == "image":
+        buffer = BytesIO()
+        mask_img.save(buffer, format='PNG')
+        return Response(
+            content=buffer.getvalue(),
+            media_type="image/png"
+        )
+
+    # Return JSON with polygon and bbox
+    polygon, bbox = _mask_to_polygon(mask)
 
     buffer = BytesIO()
     mask_img.save(buffer, format='PNG')
+    mask_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-    return Response(
-        content=buffer.getvalue(),
-        media_type="image/png"
-    )
+    return {
+        "polygon": polygon,
+        "bbox": bbox,
+        "mask_base64": mask_b64,
+        "color": {"r": color_r, "g": color_g, "b": color_b},
+        "tolerance": tolerance,
+    }
 
 
 @router.post("/extract-object")

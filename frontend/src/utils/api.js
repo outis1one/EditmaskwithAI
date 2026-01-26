@@ -171,20 +171,22 @@ export const toolsApi = {
   },
 
   // Smart select object at point
+  // Returns { polygon, bbox, mask_base64 }
   smartSelect: async (projectId, x, y) => {
     const formData = new FormData();
     formData.append('project_id', projectId);
     formData.append('point_x', x);
     formData.append('point_y', y);
+    formData.append('return_format', 'json');
 
     const response = await api.post('/tools/smart-select', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      responseType: 'blob',
     });
     return response.data;
   },
 
   // Select by color
+  // Returns { polygon, bbox, mask_base64, color, tolerance }
   colorSelect: async (projectId, r, g, b, tolerance = 30) => {
     const formData = new FormData();
     formData.append('project_id', projectId);
@@ -192,10 +194,10 @@ export const toolsApi = {
     formData.append('color_g', g);
     formData.append('color_b', b);
     formData.append('tolerance', tolerance);
+    formData.append('return_format', 'json');
 
     const response = await api.post('/tools/color-select', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      responseType: 'blob',
     });
     return response.data;
   },

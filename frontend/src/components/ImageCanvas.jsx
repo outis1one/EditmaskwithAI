@@ -61,11 +61,36 @@ const ImageCanvas = forwardRef(({
     handleResize();
     window.addEventListener('resize', handleResize);
 
+    // Mouse wheel zoom
+    const handleWheel = (opt) => {
+      const e = opt.e;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const delta = e.deltaY;
+      let newZoom = canvas.getZoom();
+      newZoom *= 0.999 ** delta;
+
+      // Clamp zoom between 0.1x and 10x
+      if (newZoom > 10) newZoom = 10;
+      if (newZoom < 0.1) newZoom = 0.1;
+
+      // Zoom to point under cursor
+      const pointer = canvas.getPointer(e, true);
+      canvas.zoomToPoint({ x: pointer.x, y: pointer.y }, newZoom);
+
+      setCurrentZoom(newZoom);
+      onZoomChange?.(newZoom);
+    };
+
+    canvas.on('mouse:wheel', handleWheel);
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      canvas.off('mouse:wheel', handleWheel);
       canvas.dispose();
     };
-  }, []);
+  }, [onZoomChange]);
 
   // Center and scale image
   const centerImage = (canvas, img, zoomFactor) => {
@@ -599,6 +624,35 @@ const ImageCanvas = forwardRef(({
       setCurrentSelection(null);
       onSelectionChange?.(null);
     }
+  };
+
+  const handleZoomIn = () => {
+    if (!fabricCanvasRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    let newZoom = canvas.getZoom() * 1.2;
+    if (newZoom > 10) newZoom = 10;
+    canvas.setZoom(newZoom);
+    setCurrentZoom(newZoom);
+    onZoomChange?.(newZoom);
+  };
+
+  const handleZoomOut = () => {
+    if (!fabricCanvasRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    let newZoom = canvas.getZoom() / 1.2;
+    if (newZoom < 0.1) newZoom = 0.1;
+    canvas.setZoom(newZoom);
+    setCurrentZoom(newZoom);
+    onZoomChange?.(newZoom);
+  };
+
+  const handleZoomReset = () => {
+    if (!fabricCanvasRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    canvas.setZoom(1);
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    setCurrentZoom(1);
+    onZoomChange?.(1);
   };
 
   return (
