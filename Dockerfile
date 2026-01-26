@@ -1,9 +1,9 @@
 # ==============================================================================
 # AI Photo Edit - Unified Container
-# Builds React frontend and serves it alongside FastAPI backend
+# Builds miniPaint frontend and serves it alongside FastAPI backend
 # ==============================================================================
 
-# Stage 1: Build React frontend
+# Stage 1: Build miniPaint frontend
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /frontend
@@ -50,8 +50,11 @@ RUN chmod +x /entrypoint.sh
 # Copy scripts
 COPY scripts/ /scripts/
 
-# Copy built frontend from stage 1
-COPY --from=frontend-build /frontend/dist /app/static
+# Copy miniPaint frontend files from stage 1
+COPY --from=frontend-build /frontend/index.html /app/static/
+COPY --from=frontend-build /frontend/dist /app/static/dist
+COPY --from=frontend-build /frontend/images /app/static/images
+COPY --from=frontend-build /frontend/src/css /app/static/src/css
 
 # Create data directories
 RUN mkdir -p /app/data/projects /app/data/patches /app/data/models
