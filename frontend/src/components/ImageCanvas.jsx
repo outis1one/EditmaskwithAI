@@ -680,7 +680,9 @@ const ImageCanvas = ({
     if (newZoom > 10) newZoom = 10;
     canvas.setZoom(newZoom);
     setCurrentZoom(newZoom);
-    onZoomChange?.(newZoom);
+    if (onZoomChangeRef.current) {
+      onZoomChangeRef.current(newZoom);
+    }
   };
 
   const handleZoomOut = () => {
@@ -690,7 +692,9 @@ const ImageCanvas = ({
     if (newZoom < 0.1) newZoom = 0.1;
     canvas.setZoom(newZoom);
     setCurrentZoom(newZoom);
-    onZoomChange?.(newZoom);
+    if (onZoomChangeRef.current) {
+      onZoomChangeRef.current(newZoom);
+    }
   };
 
   const handleZoomReset = () => {
@@ -699,7 +703,9 @@ const ImageCanvas = ({
     canvas.setZoom(1);
     canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
     setCurrentZoom(1);
-    onZoomChange?.(1);
+    if (onZoomChangeRef.current) {
+      onZoomChangeRef.current(1);
+    }
   };
 
   return (
