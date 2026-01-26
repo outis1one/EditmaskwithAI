@@ -57,7 +57,10 @@ const ImageCanvas = ({
       }
     };
 
-    handleResize();
+    // Initial resize - use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      handleResize();
+    });
     window.addEventListener('resize', handleResize);
 
     // Mouse wheel zoom
@@ -97,16 +100,30 @@ const ImageCanvas = ({
 
     const canvas = fabricCanvasRef.current;
 
+    // Ensure canvas has dimensions before loading image
+    if (canvas.width === 0 || canvas.height === 0) {
+      const container = canvasRef.current?.parentElement;
+      if (container) {
+        canvas.setWidth(container.clientWidth || 800);
+        canvas.setHeight(container.clientHeight || 600);
+      }
+    }
+
     // Add cache buster to force reload
     const cacheBustedUrl = `${imageUrl}?t=${Date.now()}`;
 
     fabric.Image.fromURL(cacheBustedUrl, (img) => {
+      if (!img) {
+        console.error('Failed to load image from URL:', cacheBustedUrl);
+        return;
+      }
+
       canvas.clear();
 
       // Scale image to fit canvas with padding
       const padding = 40;
-      const availableWidth = canvas.width - padding;
-      const availableHeight = canvas.height - padding;
+      const availableWidth = (canvas.width || 800) - padding;
+      const availableHeight = (canvas.height || 600) - padding;
       const scale = Math.min(
         availableWidth / img.width,
         availableHeight / img.height
@@ -114,8 +131,8 @@ const ImageCanvas = ({
 
       img.scale(scale);
       img.set({
-        left: (canvas.width - img.width * scale) / 2,
-        top: (canvas.height - img.height * scale) / 2,
+        left: ((canvas.width || 800) - img.width * scale) / 2,
+        top: ((canvas.height || 600) - img.height * scale) / 2,
         selectable: false,
         evented: false,
       });
