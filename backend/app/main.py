@@ -1,7 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse
 from contextlib import asynccontextmanager
+from pathlib import Path
+import os
 
 from app.config import settings
 from app.database import init_db
@@ -40,9 +43,9 @@ app.include_router(generate.router)
 app.include_router(tools.router)
 
 
-@app.get("/")
-def root():
-    """API root endpoint"""
+@app.get("/api")
+def api_root():
+    """API info endpoint"""
     return {
         "name": "AI Photo Edit API",
         "version": "1.0.0",
@@ -54,3 +57,44 @@ def root():
 def health():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+# Static files directory
+STATIC_DIR = Path("/app/static")
+
+
+# Serve static assets (JS, CSS, images)
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_spa():
+    """Serve React SPA index.html"""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return HTMLResponse("<h1>Frontend not built. Run npm build in frontend/</h1>")
+
+
+@app.get("/{full_path:path}")
+async def serve_spa_routes(request: Request, full_path: str):
+    """
+    Catch-all route for React Router (SPA).
+    Serves static files if they exist, otherwise returns index.html.
+    """
+    # Don't catch API routes
+    if full_path.startswith(("projects", "edits", "patches", "tools", "generate", "health", "docs", "openapi.json", "api")):
+        return {"detail": "Not Found"}
+
+    # Check if it's a static file
+    static_file = STATIC_DIR / full_path
+    if static_file.exists() and static_file.is_file():
+        return FileResponse(static_file)
+
+    # Otherwise serve index.html for React Router
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+
+    return HTMLResponse("<h1>Frontend not built</h1>", status_code=404)
