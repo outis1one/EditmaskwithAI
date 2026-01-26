@@ -8,12 +8,122 @@ import numpy as np
 import json
 import base64
 import cv2
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models.project import Project
 from app.schemas import StatusResponse
 
 router = APIRouter(prefix="/tools", tags=["tools"])
+
+
+# Pydantic models for JSON API
+class SmartSelectRequest(BaseModel):
+    image: str  # Base64 encoded image
+    point_x: int
+    point_y: int
+
+
+class InpaintRequest(BaseModel):
+    image: str  # Base64 encoded image
+    mask: str  # Base64 encoded mask
+    prompt: str
+    negative_prompt: Optional[str] = ""
+    strength: Optional[float] = 0.8
+    guidance_scale: Optional[float] = 7.5
+
+
+@router.post("/smart-select-base64")
+async def smart_select_base64(request: SmartSelectRequest):
+    """
+    Smart select using base64 encoded image (no project required).
+    Used by miniPaint frontend.
+    """
+    try:
+        # Decode base64 image
+        image_bytes = base64.b64decode(request.image)
+        img = Image.open(BytesIO(image_bytes)).convert('RGB')
+        img_array = np.array(img)
+
+        # Run SAM selection
+        try:
+            mask = await _sam_select(img_array, request.point_x, request.point_y)
+        except Exception as e:
+            print(f"SAM not available, using flood fill: {e}")
+            mask = _flood_fill_select(img_array, request.point_x, request.point_y)
+
+        # Convert mask to base64 PNG
+        mask_img = Image.fromarray((mask * 255).astype(np.uint8), mode='L')
+        buffer = BytesIO()
+        mask_img.save(buffer, format='PNG')
+        mask_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        # Get polygon and bbox
+        polygon, bbox = _mask_to_polygon(mask)
+
+        return {
+            "mask": mask_b64,
+            "polygon": polygon,
+            "bbox": bbox
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/inpaint")
+async def inpaint_base64(request: InpaintRequest):
+    """
+    AI inpainting using base64 encoded image and mask.
+    Used by miniPaint frontend.
+    """
+    try:
+        # Decode base64 image and mask
+        image_bytes = base64.b64decode(request.image)
+        mask_bytes = base64.b64decode(request.mask)
+
+        img = Image.open(BytesIO(image_bytes)).convert('RGB')
+        mask_img = Image.open(BytesIO(mask_bytes)).convert('L')
+
+        # Resize mask to match image if needed
+        if mask_img.size != img.size:
+            mask_img = mask_img.resize(img.size, Image.Resampling.LANCZOS)
+
+        # Get the AI provider and run inpainting
+        from app.services.ai_provider import get_ai_provider
+        from app.config import settings
+
+        provider = get_ai_provider()
+
+        # Convert images to format expected by provider
+        img_buffer = BytesIO()
+        img.save(img_buffer, format='PNG')
+        img_buffer.seek(0)
+
+        mask_buffer = BytesIO()
+        mask_img.save(mask_buffer, format='PNG')
+        mask_buffer.seek(0)
+
+        # Run inpainting
+        result_bytes = await provider.inpaint(
+            image=img_buffer,
+            mask=mask_buffer,
+            prompt=request.prompt,
+            negative_prompt=request.negative_prompt,
+            strength=request.strength
+        )
+
+        # Convert result to base64
+        result_b64 = base64.b64encode(result_bytes).decode('utf-8')
+
+        return {
+            "result": result_b64
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/remove-background")

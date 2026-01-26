@@ -93,6 +93,17 @@ config.TOOLS = [
 		on_leave: 'on_leave',
 	},
 	{
+		name: 'smart_select',
+		title: 'Smart Select (AI)',
+		attributes: {},
+	},
+	{
+		name: 'ai_inpaint',
+		title: 'AI Inpaint',
+		on_activate: 'on_activate',
+		attributes: {},
+	},
+	{
 		name: 'brush',
 		attributes: {
 			size: 4,
