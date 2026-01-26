@@ -1,0 +1,243 @@
+/**
+ * Smart Select Tool - Uses SAM (Segment Anything Model) for AI-powered selection
+ * Click on any object to automatically select it
+ */
+
+import app from './../app.js';
+import config from './../config.js';
+import Base_tools_class from './../core/base-tools.js';
+import Base_layers_class from './../core/base-layers.js';
+import Helper_class from './../libs/helpers.js';
+import Dialog_class from './../libs/popup.js';
+import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
+import apiService from './../services/api.js';
+
+class Smart_select_class extends Base_tools_class {
+
+    constructor(ctx) {
+        super();
+        this.Base_layers = new Base_layers_class();
+        this.Helper = new Helper_class();
+        this.POP = new Dialog_class();
+        this.ctx = ctx;
+        this.name = 'smart_select';
+
+        // Store the current mask data
+        this.currentMask = null;
+        this.maskCanvas = null;
+        this.isProcessing = false;
+    }
+
+    load() {
+        var _this = this;
+
+        // Mouse click event for selection
+        document.addEventListener('mousedown', function (e) {
+            _this.mousedown(e);
+        });
+    }
+
+    async mousedown(e) {
+        var mouse = this.get_mouse_info(e);
+
+        if (config.TOOL.name != this.name) return;
+        if (mouse.click_valid == false) return;
+        if (this.isProcessing) {
+            alertify.warning('Processing... please wait');
+            return;
+        }
+
+        // Check if we have an image layer
+        if (config.layer.type != 'image') {
+            alertify.error('Please select an image layer first');
+            return;
+        }
+
+        // Get click coordinates relative to the image
+        var x = mouse.x - config.layer.x;
+        var y = mouse.y - config.layer.y;
+
+        // Adjust for layer scaling
+        if (config.layer.width != config.layer.width_original) {
+            x = x * (config.layer.width_original / config.layer.width);
+        }
+        if (config.layer.height != config.layer.height_original) {
+            y = y * (config.layer.height_original / config.layer.height);
+        }
+
+        // Make sure click is within image bounds
+        if (x < 0 || y < 0 || x > config.layer.width_original || y > config.layer.height_original) {
+            alertify.error('Click inside the image');
+            return;
+        }
+
+        this.isProcessing = true;
+        alertify.message('AI is analyzing the image...');
+
+        try {
+            // Get image data as base64
+            var imageData = this.getLayerImageData();
+
+            // Call SAM API
+            var result = await apiService.smartSelect(imageData, Math.round(x), Math.round(y));
+
+            // Apply the mask as selection
+            this.applyMask(result.mask, result.bbox);
+
+            alertify.success('Selection complete! Use AI Inpaint to edit.');
+
+        } catch (error) {
+            console.error('Smart select error:', error);
+            alertify.error('Selection failed: ' + error.message);
+        } finally {
+            this.isProcessing = false;
+        }
+    }
+
+    /**
+     * Get the current layer's image data as base64
+     */
+    getLayerImageData() {
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d');
+
+        canvas.width = config.layer.width_original;
+        canvas.height = config.layer.height_original;
+
+        // Draw the layer's image
+        ctx.drawImage(config.layer.link, 0, 0);
+
+        // Return as base64 (remove data:image/png;base64, prefix)
+        return canvas.toDataURL('image/png').split(',')[1];
+    }
+
+    /**
+     * Apply the SAM mask as a selection
+     * @param {string} maskBase64 - Base64 encoded mask image
+     * @param {Object} bbox - Bounding box {x, y, width, height}
+     */
+    applyMask(maskBase64, bbox) {
+        var _this = this;
+
+        // Create mask image
+        var maskImage = new Image();
+        maskImage.onload = function() {
+            // Store mask for later use by inpaint tool
+            _this.maskCanvas = document.createElement('canvas');
+            _this.maskCanvas.width = config.layer.width_original;
+            _this.maskCanvas.height = config.layer.height_original;
+            var maskCtx = _this.maskCanvas.getContext('2d');
+            maskCtx.drawImage(maskImage, 0, 0);
+
+            _this.currentMask = {
+                canvas: _this.maskCanvas,
+                bbox: bbox
+            };
+
+            // Store globally for AI inpaint tool to access
+            window.smartSelectMask = _this.currentMask;
+
+            // Visual feedback - render mask overlay
+            _this.renderMaskOverlay();
+
+            config.need_render = true;
+        };
+        maskImage.src = 'data:image/png;base64,' + maskBase64;
+    }
+
+    /**
+     * Render a visual overlay showing the selected region
+     */
+    renderMaskOverlay() {
+        if (!this.maskCanvas) return;
+
+        // Create overlay layer or update existing
+        // For now, we'll use the selection system
+        var maskCtx = this.maskCanvas.getContext('2d');
+        var imageData = maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+
+        // Find bounding box of selection
+        var minX = this.maskCanvas.width, minY = this.maskCanvas.height;
+        var maxX = 0, maxY = 0;
+
+        for (var y = 0; y < this.maskCanvas.height; y++) {
+            for (var x = 0; x < this.maskCanvas.width; x++) {
+                var i = (y * this.maskCanvas.width + x) * 4;
+                if (imageData.data[i] > 128) { // White pixel in mask
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+
+        if (maxX > minX && maxY > minY) {
+            // Set selection using miniPaint's selection system
+            var Selection = this.Base_layers.Base_gui?.GUI_tools?.tools_modules?.selection?.object;
+            if (Selection) {
+                Selection.selection = {
+                    x: config.layer.x + minX * (config.layer.width / config.layer.width_original),
+                    y: config.layer.y + minY * (config.layer.height / config.layer.height_original),
+                    width: (maxX - minX) * (config.layer.width / config.layer.width_original),
+                    height: (maxY - minY) * (config.layer.height / config.layer.height_original)
+                };
+            }
+        }
+    }
+
+    render_overlay(ctx) {
+        // Render marching ants or highlight around selected region
+        if (!this.currentMask || !this.maskCanvas) return;
+
+        var mouse = this.get_mouse_info(event);
+
+        // Draw semi-transparent overlay on non-selected areas
+        ctx.save();
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = '#000000';
+
+        // Scale to match layer
+        var scaleX = config.layer.width / config.layer.width_original;
+        var scaleY = config.layer.height / config.layer.height_original;
+
+        ctx.translate(config.layer.x, config.layer.y);
+        ctx.scale(scaleX, scaleY);
+
+        // Draw inverse mask (darken unselected areas)
+        var maskCtx = this.maskCanvas.getContext('2d');
+        var imageData = maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+
+        // Create inverse mask canvas
+        var inverseCanvas = document.createElement('canvas');
+        inverseCanvas.width = this.maskCanvas.width;
+        inverseCanvas.height = this.maskCanvas.height;
+        var inverseCtx = inverseCanvas.getContext('2d');
+
+        inverseCtx.fillStyle = '#000000';
+        inverseCtx.fillRect(0, 0, inverseCanvas.width, inverseCanvas.height);
+        inverseCtx.globalCompositeOperation = 'destination-out';
+        inverseCtx.drawImage(this.maskCanvas, 0, 0);
+
+        ctx.drawImage(inverseCanvas, 0, 0);
+
+        ctx.restore();
+    }
+
+    /**
+     * Clear the current selection
+     */
+    clearSelection() {
+        this.currentMask = null;
+        this.maskCanvas = null;
+        window.smartSelectMask = null;
+        config.need_render = true;
+    }
+
+    on_leave() {
+        // Don't clear mask when switching tools - AI inpaint needs it
+        return [];
+    }
+}
+
+export default Smart_select_class;
