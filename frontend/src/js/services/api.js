@@ -5,8 +5,10 @@
 
 class ApiService {
     constructor() {
-        // Backend API base URL - adjust for your deployment
-        this.baseUrl = window.API_BASE_URL || '/api';
+        // Backend API base URL
+        // In unified container: empty string (same origin)
+        // With separate nginx frontend: '/api' (proxied to backend)
+        this.baseUrl = window.API_BASE_URL || '';
     }
 
     /**
