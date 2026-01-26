@@ -19,6 +19,12 @@ const ImageCanvas = ({
   const [isTransformMode, setIsTransformMode] = useState(false);
   const [currentZoom, setCurrentZoom] = useState(zoom);
   const lassoPoints = useRef([]);
+  const onZoomChangeRef = useRef(onZoomChange);
+
+  // Keep ref updated
+  useEffect(() => {
+    onZoomChangeRef.current = onZoomChange;
+  }, [onZoomChange]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -82,7 +88,9 @@ const ImageCanvas = ({
       canvas.zoomToPoint({ x: pointer.x, y: pointer.y }, newZoom);
 
       setCurrentZoom(newZoom);
-      onZoomChange?.(newZoom);
+      if (onZoomChangeRef.current) {
+        onZoomChangeRef.current(newZoom);
+      }
     };
 
     canvas.on('mouse:wheel', handleWheel);
@@ -92,7 +100,7 @@ const ImageCanvas = ({
       canvas.off('mouse:wheel', handleWheel);
       canvas.dispose();
     };
-  }, [onZoomChange]);
+  }, []); // Empty dependency array - only run once on mount
 
   // Load image when URL changes
   useEffect(() => {
