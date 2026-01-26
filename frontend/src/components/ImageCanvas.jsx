@@ -6,18 +6,23 @@ const ImageCanvas = forwardRef(({
   imageUrl,
   onSelectionChange,
   selectionMode,
-  activeTool,
+  advancedToolMode,
+  onAdvancedToolClick,
   zoom = 100,
   onZoomChange,
-  onSmartSelect,
+  externalSelection,
   isProcessing
 }, ref) => {
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
   const [currentSelection, setCurrentSelection] = useState(null);
+  const [currentZoom, setCurrentZoom] = useState(1);
   const currentSelectionRef = useRef(null);
   const lassoPoints = useRef([]);
   const onZoomChangeRef = useRef(onZoomChange);
+  const imageRef = useRef(null);
+  const baseScaleRef = useRef(1);
+  const isDrawingRef = useRef(false);
 
   // Keep ref updated
   useEffect(() => {
@@ -201,23 +206,23 @@ const ImageCanvas = forwardRef(({
     canvas.off('object:moving');
     canvas.off('object:scaling');
 
-    // Set up handlers based on selection mode
-    if (selectionMode === 'rectangle') {
+    // Set up handlers based on selection mode or advanced tool mode
+    if (advancedToolMode === 'smart-select') {
+      setupSmartSelectMode(canvas);
+    } else if (advancedToolMode === 'color-select') {
+      setupColorSelectMode(canvas);
+    } else if (selectionMode === 'rectangle') {
       setupRectangleMode(canvas);
     } else if (selectionMode === 'ellipse') {
       setupEllipseMode(canvas);
     } else if (selectionMode === 'lasso') {
       setupLassoMode(canvas);
-    } else if (selectionMode === 'smart') {
-      setupSmartSelectMode(canvas);
-    } else if (selectionMode === 'color') {
-      setupColorSelectMode(canvas);
-    } else if (activeTool === 'move') {
+    } else if (selectionMode === 'move') {
       setupMoveMode(canvas);
-    } else if (activeTool === 'pan') {
+    } else if (selectionMode === 'pan') {
       setupPanMode(canvas);
     }
-  }, [selectionMode, activeTool, onSmartSelect]);
+  }, [selectionMode, advancedToolMode, onAdvancedToolClick, isProcessing]);
 
   const setupMoveMode = (canvas) => {
     // In move mode, allow selecting and moving selection objects
@@ -284,7 +289,7 @@ const ImageCanvas = forwardRef(({
 
       // Check if click is within image bounds
       if (x >= 0 && x < img.width && y >= 0 && y < img.height) {
-        onSmartSelect?.(x, y);
+        onAdvancedToolClick?.(x, y, null);
       }
     });
 
@@ -295,9 +300,38 @@ const ImageCanvas = forwardRef(({
     canvas.on('mouse:down', (e) => {
       if (isProcessing) return;
 
-      // TODO: Get pixel color at click position
       const pointer = canvas.getPointer(e.e);
-      console.log('Color select at:', pointer);
+      const img = imageRef.current;
+
+      if (!img) return;
+
+      // Convert to image coordinates
+      const imgScale = img.scaleX;
+      const imgLeft = img.left;
+      const imgTop = img.top;
+
+      const x = Math.round((pointer.x - imgLeft) / imgScale);
+      const y = Math.round((pointer.y - imgTop) / imgScale);
+
+      // Check if click is within image bounds
+      if (x >= 0 && x < img.width && y >= 0 && y < img.height) {
+        // Get pixel color from canvas
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          // Calculate actual canvas position accounting for viewport transform
+          const vpt = canvas.viewportTransform;
+          const canvasX = pointer.x * vpt[0] + vpt[4];
+          const canvasY = pointer.y * vpt[3] + vpt[5];
+
+          const pixelData = ctx.getImageData(canvasX, canvasY, 1, 1).data;
+          const color = {
+            r: pixelData[0],
+            g: pixelData[1],
+            b: pixelData[2]
+          };
+          onAdvancedToolClick?.(x, y, color);
+        }
+      }
     });
 
     canvas.setCursor('crosshair');
@@ -691,10 +725,23 @@ const ImageCanvas = forwardRef(({
   return (
     <div className="canvas-container">
       <canvas ref={canvasRef} />
-      {currentSelection && (
-        <button className="clear-selection-btn" onClick={clearSelection}>
-          Clear
-        </button>
+      <div className="canvas-controls">
+        <div className="zoom-controls">
+          <button onClick={handleZoomOut} title="Zoom Out">−</button>
+          <span className="zoom-level">{Math.round(currentZoom * 100)}%</span>
+          <button onClick={handleZoomIn} title="Zoom In">+</button>
+          <button onClick={handleZoomReset} title="Reset Zoom">⟲</button>
+        </div>
+        {currentSelection && (
+          <button className="clear-selection-btn" onClick={clearSelection}>
+            Clear Selection
+          </button>
+        )}
+      </div>
+      {(advancedToolMode === 'smart-select' || advancedToolMode === 'color-select') && (
+        <div className="tool-mode-indicator">
+          {advancedToolMode === 'smart-select' ? 'Click on an object to select it' : 'Click on a color to select similar pixels'}
+        </div>
       )}
     </div>
   );
