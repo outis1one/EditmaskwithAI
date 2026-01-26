@@ -58,7 +58,10 @@ const ImageCanvas = forwardRef(({
       }
     };
 
-    handleResize();
+    // Initial resize - use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      handleResize();
+    });
     window.addEventListener('resize', handleResize);
 
     // Mouse wheel zoom
@@ -130,22 +133,40 @@ const ImageCanvas = forwardRef(({
     if (!fabricCanvasRef.current || !imageUrl) return;
 
     const canvas = fabricCanvasRef.current;
-    const cacheBustedUrl = imageUrl.includes('?') ? `${imageUrl}&_t=${Date.now()}` : `${imageUrl}?t=${Date.now()}`;
+
+    // Ensure canvas has dimensions before loading image
+    if (canvas.width === 0 || canvas.height === 0) {
+      const container = canvasRef.current?.parentElement;
+      if (container) {
+        canvas.setWidth(container.clientWidth || 800);
+        canvas.setHeight(container.clientHeight || 600);
+      }
+    }
+
+    // Add cache buster to force reload
+    const cacheBustedUrl = `${imageUrl}?t=${Date.now()}`;
 
     fabric.Image.fromURL(cacheBustedUrl, (img) => {
-      // Remove old image
-      if (imageRef.current) {
-        canvas.remove(imageRef.current);
+      if (!img) {
+        console.error('Failed to load image from URL:', cacheBustedUrl);
+        return;
       }
 
-      // Clear selection
-      if (currentSelectionRef.current) {
-        canvas.remove(currentSelectionRef.current);
-        setCurrentSelection(null);
-        onSelectionChange(null);
-      }
+      canvas.clear();
 
+      // Scale image to fit canvas with padding
+      const padding = 40;
+      const availableWidth = (canvas.width || 800) - padding;
+      const availableHeight = (canvas.height || 600) - padding;
+      const scale = Math.min(
+        availableWidth / img.width,
+        availableHeight / img.height
+      );
+
+      img.scale(scale);
       img.set({
+        left: ((canvas.width || 800) - img.width * scale) / 2,
+        top: ((canvas.height || 600) - img.height * scale) / 2,
         selectable: false,
         evented: false,
         hoverCursor: 'default',
