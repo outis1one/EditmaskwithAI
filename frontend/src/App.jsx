@@ -1,37 +1,84 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ImageCanvas from './components/ImageCanvas';
-import Controls from './components/Controls';
-import History from './components/History';
-import EyeCatalog from './components/EyeCatalog';
-import AdvancedTools from './components/AdvancedTools';
-import Layers from './components/Layers';
 import { projectsApi, editsApi, toolsApi } from './utils/api';
 import './App.css';
 
+// Tool definitions
+const TOOLS = {
+  move: { icon: '✥', name: 'Move', shortcut: 'V' },
+  select: { icon: '▢', name: 'Rectangle Select', shortcut: 'R' },
+  ellipse: { icon: '○', name: 'Ellipse Select', shortcut: 'E' },
+  lasso: { icon: '✎', name: 'Free Select (Lasso)', shortcut: 'F' },
+  magic: { icon: '✨', name: 'Smart Select (SAM)', shortcut: 'W' },
+  colorPick: { icon: '◉', name: 'Color Select', shortcut: 'U' },
+  brush: { icon: '🖌', name: 'Brush', shortcut: 'B' },
+  bucket: { icon: '◧', name: 'Bucket Fill', shortcut: 'G' },
+  eraser: { icon: '◫', name: 'Eraser', shortcut: 'Shift+E' },
+  eyedropper: { icon: '💧', name: 'Color Picker', shortcut: 'O' },
+  zoom: { icon: '🔍', name: 'Zoom', shortcut: 'Z' },
+  pan: { icon: '✋', name: 'Pan', shortcut: 'H' },
+};
+
 function App() {
+  // Project state
   const [project, setProject] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   const [currentImageUrl, setCurrentImageUrl] = useState(null);
-  const [selection, setSelection] = useState(null);
-  const [selectionMode, setSelectionMode] = useState('rectangle');
-  const [mode, setMode] = useState('A');
-  const [feather, setFeather] = useState(5);
-  const [prompt, setPrompt] = useState('');
-  const [edits, setEdits] = useState([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState(null);
+  const [showProjectSetup, setShowProjectSetup] = useState(true);
   const [projectName, setProjectName] = useState('');
-  const [showProjectInput, setShowProjectInput] = useState(true);
+
+  // Tool state
+  const [activeTool, setActiveTool] = useState('select');
+  const [selection, setSelection] = useState(null);
+
+  // Edit state
+  const [prompt, setPrompt] = useState('');
+  const [feather, setFeather] = useState(5);
+  const [mode, setMode] = useState('A');
+  const [edits, setEdits] = useState([]);
   const [currentEditIndex, setCurrentEditIndex] = useState(-1);
-  const [layers, setLayers] = useState([]);
-  const [activeLayer, setActiveLayer] = useState('background');
-  const [generatedMask, setGeneratedMask] = useState(null);
-  const [advancedToolMode, setAdvancedToolMode] = useState(null); // 'smart-select', 'color-select', 'object-remove'
-  const [canvasZoom, setCanvasZoom] = useState(1);
-  const [externalSelection, setExternalSelection] = useState(null); // For smart-select/color-select polygon results
   const editsRef = useRef([]);
 
-  // Create project and upload image
+  // Layer state
+  const [layers, setLayers] = useState([]);
+
+  // UI state
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState(null);
+  const [zoom, setZoom] = useState(100);
+  const [collapsedPanels, setCollapsedPanels] = useState({});
+  const [eyes, setEyes] = useState([]);
+  const [selectedEye, setSelectedEye] = useState(null);
+
+  // Canvas ref for tool interactions
+  const canvasRef = useRef(null);
+
+  // Map tool to selection mode
+  const getSelectionMode = () => {
+    switch (activeTool) {
+      case 'select': return 'rectangle';
+      case 'ellipse': return 'ellipse';
+      case 'lasso': return 'lasso';
+      case 'magic': return 'smart';
+      case 'colorPick': return 'color';
+      default: return null;
+    }
+  };
+
+  // Load eyes catalog
+  useEffect(() => {
+    const loadEyes = async () => {
+      try {
+        const patches = await fetch('/patches/?category=eyes').then(r => r.json()).catch(() => []);
+        setEyes(patches);
+      } catch (err) {
+        console.error('Failed to load eyes:', err);
+      }
+    };
+    if (project) loadEyes();
+  }, [project]);
+
+  // Create project
   const handleCreateProject = async () => {
     if (!imageFile) {
       setError('Please select an image');
@@ -42,25 +89,17 @@ function App() {
       setError(null);
       setIsProcessing(true);
 
-      // Generate default project name from file name or timestamp
       const defaultName = projectName.trim() ||
         imageFile.name.replace(/\.[^/.]+$/, '') ||
         `Project ${Date.now()}`;
 
-      // Create project
       const newProject = await projectsApi.create(defaultName);
       setProject(newProject);
 
-      // Upload image
       await projectsApi.uploadImage(newProject.id, imageFile);
-
-      // Set current image URL
       setCurrentImageUrl(projectsApi.getCurrentImageUrl(newProject.id));
+      setShowProjectSetup(false);
 
-      // Hide project input
-      setShowProjectInput(false);
-
-      // Load edits
       await loadEdits(newProject.id);
     } catch (err) {
       setError(`Failed to create project: ${err.message}`);
@@ -69,13 +108,12 @@ function App() {
     }
   };
 
-  // Load edits for the project
+  // Load edits
   const loadEdits = async (projectId) => {
     try {
       const projectEdits = await projectsApi.getEdits(projectId);
       setEdits(projectEdits);
       editsRef.current = projectEdits;
-      // Set index to latest completed edit
       const completedEdits = projectEdits.filter(e => e.status === 'completed');
       setCurrentEditIndex(completedEdits.length - 1);
     } catch (err) {
@@ -83,9 +121,9 @@ function App() {
     }
   };
 
-  // Poll for edit status
+  // Poll edit status
   const pollEditStatus = async (editId) => {
-    const maxAttempts = 60; // 60 attempts = 1 minute with 1 second interval
+    const maxAttempts = 120;
     let attempts = 0;
 
     const poll = async () => {
@@ -93,28 +131,26 @@ function App() {
         const edit = await editsApi.get(editId);
 
         if (edit.status === 'completed') {
-          // Reload edits and update image
           await loadEdits(project.id);
-          setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
+          setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id) + `?t=${Date.now()}`);
           setIsProcessing(false);
           setSelection(null);
           return;
         } else if (edit.status === 'failed') {
           setError(`Edit failed: ${edit.error_message}`);
           setIsProcessing(false);
-          await loadEdits(project.id);
           return;
         }
 
         attempts++;
         if (attempts < maxAttempts) {
-          setTimeout(poll, 1000); // Poll every 1 second
+          setTimeout(poll, 1000);
         } else {
-          setError('Edit timeout - please check edit history');
+          setError('Edit timeout');
           setIsProcessing(false);
         }
       } catch (err) {
-        setError(`Failed to check edit status: ${err.message}`);
+        setError(`Status check failed: ${err.message}`);
         setIsProcessing(false);
       }
     };
@@ -122,10 +158,10 @@ function App() {
     poll();
   };
 
-  // Handle fix button
+  // Handle AI fix
   const handleFix = async () => {
     if (!selection || !prompt.trim() || !project) {
-      setError('Please make a selection and enter a prompt');
+      setError('Make a selection and enter a prompt');
       return;
     }
 
@@ -143,248 +179,214 @@ function App() {
       };
 
       const edit = await editsApi.create(project.id, editRequest);
-
-      // Start polling for status
       pollEditStatus(edit.id);
     } catch (err) {
-      setError(`Failed to process edit: ${err.message}`);
+      setError(`Edit failed: ${err.message}`);
       setIsProcessing(false);
     }
   };
 
-  // Handle revert
+  // Undo/Redo
   const handleRevert = useCallback(async (editId) => {
     if (!project) return;
-
     try {
-      setError(null);
       setIsProcessing(true);
-
       await editsApi.revert(project.id, editId);
-
-      // Update image
-      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
-
+      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id) + `?t=${Date.now()}`);
       await loadEdits(project.id);
     } catch (err) {
-      setError(`Failed to revert: ${err.message}`);
+      setError(`Revert failed: ${err.message}`);
     } finally {
       setIsProcessing(false);
     }
   }, [project]);
 
-  // Handle reset
   const handleReset = useCallback(async () => {
     if (!project) return;
-
     try {
-      setError(null);
       setIsProcessing(true);
-
       await editsApi.reset(project.id);
-
-      // Update image
-      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
-
+      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id) + `?t=${Date.now()}`);
       await loadEdits(project.id);
     } catch (err) {
-      setError(`Failed to reset: ${err.message}`);
+      setError(`Reset failed: ${err.message}`);
     } finally {
       setIsProcessing(false);
     }
   }, [project]);
 
-  // Handle download
+  // Download
   const handleDownload = async () => {
     if (!currentImageUrl) return;
-
     try {
-      // Fetch the current image
-      const response = await fetch(`${currentImageUrl}?t=${Date.now()}`);
+      const response = await fetch(`${currentImageUrl}&download=1`);
       const blob = await response.blob();
-
-      // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `edited-image-${Date.now()}.png`;
-      document.body.appendChild(link);
+      link.download = `${project?.name || 'image'}-${Date.now()}.png`;
       link.click();
-      document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      setError(`Failed to download: ${err.message}`);
+      setError(`Download failed: ${err.message}`);
     }
   };
 
-  // Handle undo (Ctrl+Z)
-  const handleUndo = useCallback(async () => {
-    if (!project || isProcessing) return;
-
-    const completedEdits = editsRef.current.filter(e => e.status === 'completed');
-    if (completedEdits.length === 0) return;
-
-    if (currentEditIndex <= 0) {
-      // Revert to original
-      await handleReset();
-      setCurrentEditIndex(-1);
-    } else {
-      // Revert to previous edit
-      const previousEdit = completedEdits[currentEditIndex - 1];
-      await handleRevert(previousEdit.id);
-      setCurrentEditIndex(currentEditIndex - 1);
+  // Smart Select (SAM)
+  const handleSmartSelect = async (x, y) => {
+    if (!project) return;
+    try {
+      setIsProcessing(true);
+      const maskBlob = await toolsApi.smartSelect(project.id, x, y);
+      // TODO: Display mask on canvas
+      console.log('Smart select mask:', maskBlob);
+    } catch (err) {
+      setError(`Smart select failed: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
     }
-  }, [project, isProcessing, currentEditIndex, handleReset, handleRevert]);
+  };
 
-  // Handle redo (Ctrl+Y)
-  const handleRedo = useCallback(async () => {
-    if (!project || isProcessing) return;
+  // Remove background
+  const handleRemoveBackground = async () => {
+    if (!project) return;
+    try {
+      setIsProcessing(true);
+      await toolsApi.removeBackgroundToLayer(project.id);
+      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id) + `?t=${Date.now()}`);
+    } catch (err) {
+      setError(`Background removal failed: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
-    const completedEdits = editsRef.current.filter(e => e.status === 'completed');
-    if (currentEditIndex >= completedEdits.length - 1) return;
+  // Apply eye
+  const handleApplyEye = async () => {
+    if (!project || !selection || !selectedEye) {
+      setError('Select an area and an eye to apply');
+      return;
+    }
+    try {
+      setIsProcessing(true);
+      const formData = new FormData();
+      formData.append('project_id', project.id);
+      formData.append('patch_id', selectedEye.id);
+      formData.append('bbox', JSON.stringify(selection.bbox));
+      formData.append('feather_px', feather);
 
-    const nextEdit = completedEdits[currentEditIndex + 1];
-    await handleRevert(nextEdit.id);
-    setCurrentEditIndex(currentEditIndex + 1);
-  }, [project, isProcessing, currentEditIndex, handleRevert]);
+      await fetch('/patches/apply', {
+        method: 'POST',
+        body: formData,
+      });
 
-  // Keyboard shortcut handler
+      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id) + `?t=${Date.now()}`);
+      await loadEdits(project.id);
+    } catch (err) {
+      setError(`Apply eye failed: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Don't trigger shortcuts when typing in input fields
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-        e.preventDefault();
-        handleRedo();
+      // Tool shortcuts
+      if (!e.ctrlKey && !e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'v': setActiveTool('move'); break;
+          case 'r': setActiveTool('select'); break;
+          case 'e': setActiveTool('ellipse'); break;
+          case 'f': setActiveTool('lasso'); break;
+          case 'w': setActiveTool('magic'); break;
+          case 'b': setActiveTool('brush'); break;
+          case 'g': setActiveTool('bucket'); break;
+          case 'z': setActiveTool('zoom'); break;
+          case 'h': setActiveTool('pan'); break;
+          case 'delete':
+          case 'backspace':
+            if (selection) {
+              // TODO: Delete selected area
+            }
+            break;
+        }
+      }
+
+      // Ctrl shortcuts
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'z':
+            e.preventDefault();
+            if (e.shiftKey) {
+              // Redo
+              const completed = editsRef.current.filter(ed => ed.status === 'completed');
+              if (currentEditIndex < completed.length - 1) {
+                handleRevert(completed[currentEditIndex + 1].id);
+                setCurrentEditIndex(i => i + 1);
+              }
+            } else {
+              // Undo
+              if (currentEditIndex >= 0) {
+                if (currentEditIndex === 0) {
+                  handleReset();
+                } else {
+                  const completed = editsRef.current.filter(ed => ed.status === 'completed');
+                  handleRevert(completed[currentEditIndex - 1].id);
+                }
+                setCurrentEditIndex(i => i - 1);
+              }
+            }
+            break;
+          case 's':
+            e.preventDefault();
+            handleDownload();
+            break;
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, [selection, currentEditIndex, handleRevert, handleReset]);
 
-  // Warn before leaving page when there are unsaved changes
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (project && edits.length > 0) {
-        e.preventDefault();
-        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-        return e.returnValue;
-      }
-    };
+  // Zoom controls
+  const handleZoomIn = () => setZoom(z => Math.min(z + 25, 400));
+  const handleZoomOut = () => setZoom(z => Math.max(z - 25, 25));
+  const handleZoomReset = () => setZoom(100);
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [project, edits]);
-
-  // Handle layer creation from advanced tools
-  const handleLayerCreated = (layer) => {
-    setLayers((prev) => [...prev, { ...layer, visible: true }]);
+  // Panel toggle
+  const togglePanel = (panel) => {
+    setCollapsedPanels(prev => ({ ...prev, [panel]: !prev[panel] }));
   };
 
-  // Handle mask generation from smart select / color select
-  const handleMaskGenerated = async (maskData, source) => {
-    setGeneratedMask({ data: maskData, source });
-    // Convert mask to selection if it contains polygon data
-    if (maskData && maskData.polygon && maskData.polygon.length > 0) {
-      // Set external selection for canvas to draw
-      setExternalSelection({
-        polygon: maskData.polygon,
-        bbox: maskData.bbox,
-      });
-      // Also set selection state for fix button
-      setSelection({
-        type: 'polygon',
-        bbox: maskData.bbox,
-        selectionData: { points: maskData.polygon },
-      });
-    }
-    // Reset tool mode after selection
-    setAdvancedToolMode(null);
-  };
-
-  // Handle canvas click for advanced tools (smart select, color select)
-  const handleAdvancedToolClick = async (x, y, color) => {
-    if (!project || !advancedToolMode) return;
-
-    try {
-      setIsProcessing(true);
-      setError(null);
-
-      if (advancedToolMode === 'smart-select') {
-        const result = await toolsApi.smartSelect(project.id, x, y);
-        handleMaskGenerated(result, 'smart-select');
-      } else if (advancedToolMode === 'color-select') {
-        // Color is passed from canvas click
-        if (color) {
-          const result = await toolsApi.colorSelect(project.id, color.r, color.g, color.b, 30);
-          handleMaskGenerated(result, 'color-select');
-        }
-      }
-    } catch (err) {
-      setError(`${advancedToolMode} failed: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Handle flatten layers
-  const handleFlattenLayers = async (layerOrder) => {
-    if (!project) return;
-    try {
-      setIsProcessing(true);
-      await toolsApi.flattenLayers(project.id, layerOrder);
-      setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
-      setLayers([]);
-    } catch (err) {
-      setError(`Failed to flatten layers: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  return (
-    <div className="app">
-      <div className="container">
-        <div className="header">
-          <h1>AI Photo Edit</h1>
-          <p>Have AI regenerate only a selected area of your photo</p>
-        </div>
-
-        {error && (
-          <div className="error-banner">
-            <strong>Error:</strong> {error}
-            <button onClick={() => setError(null)}>✕</button>
-          </div>
-        )}
-
-        {showProjectInput ? (
+  // Project setup overlay
+  if (showProjectSetup) {
+    return (
+      <div className="app">
+        <div className="project-setup-overlay">
           <div className="project-setup">
-            <h2>Start Editing</h2>
+            <h2>Open Image</h2>
             <div className="setup-form">
               <div className="form-group">
-                <label>Upload Image</label>
+                <label>Select Image</label>
                 <input
                   type="file"
                   accept="image/*"
                   onChange={(e) => setImageFile(e.target.files[0])}
                   disabled={isProcessing}
                 />
-                {imageFile && (
-                  <p className="file-name">Selected: {imageFile.name}</p>
-                )}
+                {imageFile && <p className="file-name">{imageFile.name}</p>}
               </div>
-              <div className="form-group optional-field">
+              <div className="form-group">
                 <label>Project Name (optional)</label>
                 <input
                   type="text"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="Uses filename if left empty"
+                  placeholder="Auto-generated from filename"
                   disabled={isProcessing}
                 />
               </div>
@@ -393,90 +395,301 @@ function App() {
                 onClick={handleCreateProject}
                 disabled={isProcessing || !imageFile}
               >
-                {isProcessing ? 'Starting...' : 'Start Editing'}
+                {isProcessing ? 'Opening...' : 'Open'}
               </button>
             </div>
           </div>
-        ) : (
-          <div className="workspace">
-            <div className="left-panel">
-              <ImageCanvas
-                imageUrl={currentImageUrl}
-                onSelectionChange={setSelection}
-                selectionMode={selectionMode}
-                advancedToolMode={advancedToolMode}
-                onAdvancedToolClick={handleAdvancedToolClick}
-                zoom={canvasZoom}
-                onZoomChange={setCanvasZoom}
-                externalSelection={externalSelection}
-              />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      {/* Menu Bar */}
+      <div className="menu-bar">
+        <h1>AI Photo Edit</h1>
+        <div className="menu-actions">
+          <button className="menu-btn" onClick={() => setShowProjectSetup(true)}>New</button>
+          <button className="menu-btn" onClick={handleDownload}>Save</button>
+          <button className="menu-btn" onClick={handleReset}>Reset</button>
+        </div>
+      </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="error-banner">
+          {error}
+          <button onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+
+      {/* Main Workspace */}
+      <div className="workspace">
+        {/* Left Toolbar */}
+        <div className="toolbar">
+          <button
+            className={`tool-btn ${activeTool === 'move' ? 'active' : ''}`}
+            onClick={() => setActiveTool('move')}
+            title="Move (V)"
+          >✥</button>
+
+          <div className="tool-divider" />
+
+          <button
+            className={`tool-btn ${activeTool === 'select' ? 'active' : ''}`}
+            onClick={() => setActiveTool('select')}
+            title="Rectangle Select (R)"
+          >▢</button>
+          <button
+            className={`tool-btn ${activeTool === 'ellipse' ? 'active' : ''}`}
+            onClick={() => setActiveTool('ellipse')}
+            title="Ellipse Select (E)"
+          >○</button>
+          <button
+            className={`tool-btn ${activeTool === 'lasso' ? 'active' : ''}`}
+            onClick={() => setActiveTool('lasso')}
+            title="Free Select (F)"
+          >✎</button>
+          <button
+            className={`tool-btn ${activeTool === 'magic' ? 'active' : ''}`}
+            onClick={() => setActiveTool('magic')}
+            title="Smart Select - SAM (W)"
+          >✨</button>
+          <button
+            className={`tool-btn ${activeTool === 'colorPick' ? 'active' : ''}`}
+            onClick={() => setActiveTool('colorPick')}
+            title="Color Select (U)"
+          >◉</button>
+
+          <div className="tool-divider" />
+
+          <button
+            className={`tool-btn ${activeTool === 'brush' ? 'active' : ''}`}
+            onClick={() => setActiveTool('brush')}
+            title="Brush (B)"
+          >🖌</button>
+          <button
+            className={`tool-btn ${activeTool === 'bucket' ? 'active' : ''}`}
+            onClick={() => setActiveTool('bucket')}
+            title="Bucket Fill (G)"
+          >◧</button>
+          <button
+            className={`tool-btn ${activeTool === 'eraser' ? 'active' : ''}`}
+            onClick={() => setActiveTool('eraser')}
+            title="Eraser (Shift+E)"
+          >◫</button>
+
+          <div className="tool-divider" />
+
+          <button
+            className={`tool-btn ${activeTool === 'eyedropper' ? 'active' : ''}`}
+            onClick={() => setActiveTool('eyedropper')}
+            title="Color Picker (O)"
+          >💧</button>
+          <button
+            className={`tool-btn ${activeTool === 'zoom' ? 'active' : ''}`}
+            onClick={() => setActiveTool('zoom')}
+            title="Zoom (Z)"
+          >🔍</button>
+          <button
+            className={`tool-btn ${activeTool === 'pan' ? 'active' : ''}`}
+            onClick={() => setActiveTool('pan')}
+            title="Pan (H)"
+          >✋</button>
+        </div>
+
+        {/* Canvas Area */}
+        <div className="canvas-area">
+          <div className="canvas-wrapper">
+            <ImageCanvas
+              ref={canvasRef}
+              imageUrl={currentImageUrl}
+              onSelectionChange={setSelection}
+              selectionMode={getSelectionMode()}
+              activeTool={activeTool}
+              zoom={zoom}
+              onSmartSelect={handleSmartSelect}
+              isProcessing={isProcessing}
+            />
+            {isProcessing && (
+              <div className="processing-overlay">
+                <div className="processing-spinner" />
+              </div>
+            )}
+          </div>
+          <div className="canvas-status">
+            <div className="zoom-controls">
+              <button className="zoom-btn" onClick={handleZoomOut}>−</button>
+              <span className="zoom-level">{zoom}%</span>
+              <button className="zoom-btn" onClick={handleZoomIn}>+</button>
+              <button className="zoom-btn" onClick={handleZoomReset}>⟲</button>
             </div>
+            <span>Selection: {selection ? `${selection.bbox?.width || 0}×${selection.bbox?.height || 0}` : 'None'}</span>
+            <span>Tool: {TOOLS[activeTool]?.name || activeTool}</span>
+          </div>
+        </div>
 
-            <div className="right-panel">
-              <Controls
-                selectionMode={selectionMode}
-                onSelectionModeChange={setSelectionMode}
-                mode={mode}
-                onModeChange={setMode}
-                feather={feather}
-                onFeatherChange={setFeather}
-                prompt={prompt}
-                onPromptChange={setPrompt}
-                onFix={handleFix}
-                onDownload={handleDownload}
-                isProcessing={isProcessing}
-                hasSelection={!!selection}
-              />
-
-              <AdvancedTools
-                projectId={project?.id}
-                selection={selection}
-                onLayerCreated={handleLayerCreated}
-                onMaskGenerated={handleMaskGenerated}
-                onImageUpdate={() => {
-                  setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
-                }}
-                isProcessing={isProcessing}
-                setIsProcessing={setIsProcessing}
-                setError={setError}
-                activeToolMode={advancedToolMode}
-                setActiveToolMode={setAdvancedToolMode}
-              />
-
-              <Layers
-                projectId={project?.id}
-                layers={layers}
-                setLayers={setLayers}
-                activeLayer={activeLayer}
-                setActiveLayer={setActiveLayer}
-                onFlatten={handleFlattenLayers}
-                isProcessing={isProcessing}
-                onError={setError}
-              />
-
-              <EyeCatalog
-                projectId={project?.id}
-                selection={selection}
-                feather={feather}
-                onApply={async () => {
-                  // Reload image after applying eye
-                  setCurrentImageUrl(projectsApi.getCurrentImageUrl(project.id));
-                  await loadEdits(project.id);
-                }}
-                isProcessing={isProcessing}
-              />
-
-              <div className="history-wrapper">
-                <History
-                  edits={edits}
-                  onRevert={handleRevert}
-                  onReset={handleReset}
-                  isProcessing={isProcessing}
-                />
+        {/* Right Sidebar */}
+        <div className="sidebar">
+          {/* Tool Options Panel */}
+          <div className="sidebar-panel">
+            <div className="panel-header" onClick={() => togglePanel('toolOptions')}>
+              <h3>Tool Options</h3>
+              <span className="panel-toggle">{collapsedPanels.toolOptions ? '▶' : '▼'}</span>
+            </div>
+            <div className={`panel-content ${collapsedPanels.toolOptions ? 'collapsed' : ''}`}>
+              <div className="control-group">
+                <label className="control-label">Feather</label>
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min="0"
+                    max="50"
+                    value={feather}
+                    onChange={(e) => setFeather(parseInt(e.target.value))}
+                  />
+                  <span className="slider-value">{feather}px</span>
+                </div>
               </div>
             </div>
           </div>
-        )}
+
+          {/* AI Edit Panel */}
+          <div className="sidebar-panel">
+            <div className="panel-header" onClick={() => togglePanel('aiEdit')}>
+              <h3>AI Edit</h3>
+              <span className="panel-toggle">{collapsedPanels.aiEdit ? '▶' : '▼'}</span>
+            </div>
+            <div className={`panel-content ${collapsedPanels.aiEdit ? 'collapsed' : ''}`}>
+              <div className="control-group">
+                <label className="control-label">Mode</label>
+                <div className="control-row">
+                  <button
+                    className={`mode-btn ${mode === 'A' ? 'active' : ''}`}
+                    onClick={() => setMode('A')}
+                  >Patch Only</button>
+                  <button
+                    className={`mode-btn ${mode === 'B' ? 'active' : ''}`}
+                    onClick={() => setMode('B')}
+                  >With Context</button>
+                </div>
+              </div>
+              <div className="control-group">
+                <label className="control-label">Prompt</label>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Describe what to fix or change..."
+                />
+              </div>
+              <button
+                className="action-btn"
+                onClick={handleFix}
+                disabled={isProcessing || !selection || !prompt.trim()}
+              >
+                {isProcessing ? 'Processing...' : 'Apply AI Edit'}
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Actions Panel */}
+          <div className="sidebar-panel">
+            <div className="panel-header" onClick={() => togglePanel('actions')}>
+              <h3>Quick Actions</h3>
+              <span className="panel-toggle">{collapsedPanels.actions ? '▶' : '▼'}</span>
+            </div>
+            <div className={`panel-content ${collapsedPanels.actions ? 'collapsed' : ''}`}>
+              <button
+                className="action-btn secondary"
+                onClick={handleRemoveBackground}
+                disabled={isProcessing}
+              >Remove Background</button>
+            </div>
+          </div>
+
+          {/* Eyes Panel */}
+          <div className="sidebar-panel">
+            <div className="panel-header" onClick={() => togglePanel('eyes')}>
+              <h3>Eye Catalog</h3>
+              <span className="panel-toggle">{collapsedPanels.eyes ? '▶' : '▼'}</span>
+            </div>
+            <div className={`panel-content ${collapsedPanels.eyes ? 'collapsed' : ''}`}>
+              {eyes.length > 0 ? (
+                <>
+                  <div className="eye-grid">
+                    {eyes.map(eye => (
+                      <div
+                        key={eye.id}
+                        className={`eye-item ${selectedEye?.id === eye.id ? 'selected' : ''}`}
+                        onClick={() => setSelectedEye(eye)}
+                      >
+                        <img src={`/patches/${eye.id}/image?thumbnail=true`} alt={eye.name} />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    className="action-btn"
+                    onClick={handleApplyEye}
+                    disabled={isProcessing || !selection || !selectedEye}
+                    style={{ marginTop: '12px' }}
+                  >Apply Eye to Selection</button>
+                </>
+              ) : (
+                <p style={{ fontSize: '12px', color: '#888' }}>No eyes in catalog</p>
+              )}
+            </div>
+          </div>
+
+          {/* Layers Panel */}
+          <div className="sidebar-panel">
+            <div className="panel-header" onClick={() => togglePanel('layers')}>
+              <h3>Layers</h3>
+              <span className="panel-toggle">{collapsedPanels.layers ? '▶' : '▼'}</span>
+            </div>
+            <div className={`panel-content ${collapsedPanels.layers ? 'collapsed' : ''}`}>
+              <div className="layer-list">
+                <div className="layer-item active">
+                  <button className="layer-visibility visible">👁</button>
+                  <span className="layer-name">Background</span>
+                </div>
+                {layers.map((layer) => (
+                  <div key={layer.id} className="layer-item">
+                    <button className="layer-visibility visible">👁</button>
+                    <span className="layer-name">{layer.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* History Panel */}
+          <div className="sidebar-panel">
+            <div className="panel-header" onClick={() => togglePanel('history')}>
+              <h3>History</h3>
+              <span className="panel-toggle">{collapsedPanels.history ? '▶' : '▼'}</span>
+            </div>
+            <div className={`panel-content ${collapsedPanels.history ? 'collapsed' : ''}`}>
+              <div className="history-list">
+                <div
+                  className={`history-item ${currentEditIndex === -1 ? 'current' : ''}`}
+                  onClick={handleReset}
+                >
+                  Original
+                </div>
+                {edits.filter(e => e.status === 'completed').map((edit, i) => (
+                  <div
+                    key={edit.id}
+                    className={`history-item ${currentEditIndex === i ? 'current' : ''}`}
+                    onClick={() => handleRevert(edit.id)}
+                  >
+                    {edit.prompt?.substring(0, 30) || `Edit ${i + 1}`}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
