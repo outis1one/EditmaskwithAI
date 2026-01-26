@@ -89,28 +89,26 @@ async def inpaint_base64(request: InpaintRequest):
         if mask_img.size != img.size:
             mask_img = mask_img.resize(img.size, Image.Resampling.LANCZOS)
 
-        # Get the AI provider and run inpainting
+        # Get the AI provider
         from app.services.ai_provider import get_ai_provider
-        from app.config import settings
 
         provider = get_ai_provider()
 
-        # Convert images to format expected by provider
+        # Convert images to bytes for provider
         img_buffer = BytesIO()
         img.save(img_buffer, format='PNG')
-        img_buffer.seek(0)
+        img_bytes = img_buffer.getvalue()
 
         mask_buffer = BytesIO()
         mask_img.save(mask_buffer, format='PNG')
-        mask_buffer.seek(0)
+        mask_bytes_png = mask_buffer.getvalue()
 
-        # Run inpainting
-        result_bytes = await provider.inpaint(
-            image=img_buffer,
-            mask=mask_buffer,
+        # Run inpainting using edit_image method
+        result_bytes = await provider.edit_image(
+            patch_image_bytes=img_bytes,
+            mask_image_bytes=mask_bytes_png,
             prompt=request.prompt,
-            negative_prompt=request.negative_prompt,
-            strength=request.strength
+            mode="A"  # Patch-only mode
         )
 
         # Convert result to base64

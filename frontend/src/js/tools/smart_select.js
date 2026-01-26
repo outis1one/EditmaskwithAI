@@ -26,6 +26,7 @@ class Smart_select_class extends Base_tools_class {
         this.currentMask = null;
         this.maskCanvas = null;
         this.isProcessing = false;
+        this.selectionBounds = null;
     }
 
     load() {
@@ -137,33 +138,35 @@ class Smart_select_class extends Base_tools_class {
             // Store globally for AI inpaint tool to access
             window.smartSelectMask = _this.currentMask;
 
-            // Visual feedback - render mask overlay
-            _this.renderMaskOverlay();
+            // Calculate selection bounds from mask
+            _this.calculateSelectionBounds();
 
+            // Trigger re-render
             config.need_render = true;
+            _this.Base_layers.render();
         };
         maskImage.src = 'data:image/png;base64,' + maskBase64;
     }
 
     /**
-     * Render a visual overlay showing the selected region
+     * Calculate the bounding box of the selection from the mask
      */
-    renderMaskOverlay() {
+    calculateSelectionBounds() {
         if (!this.maskCanvas) return;
 
-        // Create overlay layer or update existing
-        // For now, we'll use the selection system
         var maskCtx = this.maskCanvas.getContext('2d');
         var imageData = maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
 
         // Find bounding box of selection
         var minX = this.maskCanvas.width, minY = this.maskCanvas.height;
         var maxX = 0, maxY = 0;
+        var hasSelection = false;
 
         for (var y = 0; y < this.maskCanvas.height; y++) {
             for (var x = 0; x < this.maskCanvas.width; x++) {
                 var i = (y * this.maskCanvas.width + x) * 4;
                 if (imageData.data[i] > 128) { // White pixel in mask
+                    hasSelection = true;
                     minX = Math.min(minX, x);
                     minY = Math.min(minY, y);
                     maxX = Math.max(maxX, x);
@@ -172,54 +175,66 @@ class Smart_select_class extends Base_tools_class {
             }
         }
 
-        if (maxX > minX && maxY > minY) {
-            // Set selection using miniPaint's selection system
-            var Selection = this.Base_layers.Base_gui?.GUI_tools?.tools_modules?.selection?.object;
-            if (Selection) {
-                Selection.selection = {
-                    x: config.layer.x + minX * (config.layer.width / config.layer.width_original),
-                    y: config.layer.y + minY * (config.layer.height / config.layer.height_original),
-                    width: (maxX - minX) * (config.layer.width / config.layer.width_original),
-                    height: (maxY - minY) * (config.layer.height / config.layer.height_original)
-                };
-            }
+        if (hasSelection && maxX > minX && maxY > minY) {
+            // Scale to current layer dimensions
+            var scaleX = config.layer.width / config.layer.width_original;
+            var scaleY = config.layer.height / config.layer.height_original;
+
+            this.selectionBounds = {
+                x: config.layer.x + minX * scaleX,
+                y: config.layer.y + minY * scaleY,
+                width: (maxX - minX) * scaleX,
+                height: (maxY - minY) * scaleY
+            };
         }
     }
 
+    /**
+     * Render overlay - called by miniPaint's rendering system
+     */
     render_overlay(ctx) {
-        // Render marching ants or highlight around selected region
         if (!this.currentMask || !this.maskCanvas) return;
-
-        var mouse = this.get_mouse_info(event);
 
         // Draw semi-transparent overlay on non-selected areas
         ctx.save();
-        ctx.globalAlpha = 0.3;
-        ctx.fillStyle = '#000000';
 
         // Scale to match layer
         var scaleX = config.layer.width / config.layer.width_original;
         var scaleY = config.layer.height / config.layer.height_original;
 
-        ctx.translate(config.layer.x, config.layer.y);
-        ctx.scale(scaleX, scaleY);
-
-        // Draw inverse mask (darken unselected areas)
-        var maskCtx = this.maskCanvas.getContext('2d');
-        var imageData = maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
-
-        // Create inverse mask canvas
+        // Create inverse mask canvas (darkens unselected areas)
         var inverseCanvas = document.createElement('canvas');
         inverseCanvas.width = this.maskCanvas.width;
         inverseCanvas.height = this.maskCanvas.height;
         var inverseCtx = inverseCanvas.getContext('2d');
 
-        inverseCtx.fillStyle = '#000000';
+        // Fill with semi-transparent black
+        inverseCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         inverseCtx.fillRect(0, 0, inverseCanvas.width, inverseCanvas.height);
+
+        // Cut out the selected area
         inverseCtx.globalCompositeOperation = 'destination-out';
         inverseCtx.drawImage(this.maskCanvas, 0, 0);
 
-        ctx.drawImage(inverseCanvas, 0, 0);
+        // Draw the overlay on the main canvas
+        ctx.drawImage(
+            inverseCanvas,
+            config.layer.x, config.layer.y,
+            config.layer.width, config.layer.height
+        );
+
+        // Draw marching ants border around selection
+        if (this.selectionBounds) {
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(
+                this.selectionBounds.x,
+                this.selectionBounds.y,
+                this.selectionBounds.width,
+                this.selectionBounds.height
+            );
+        }
 
         ctx.restore();
     }
@@ -230,6 +245,7 @@ class Smart_select_class extends Base_tools_class {
     clearSelection() {
         this.currentMask = null;
         this.maskCanvas = null;
+        this.selectionBounds = null;
         window.smartSelectMask = null;
         config.need_render = true;
     }
