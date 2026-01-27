@@ -2,7 +2,7 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 Pillow>=12.1.0,<13.0.0
-numpy==2.3.0
+# numpy version will be resolved by pip based on torch/rembg requirements
 sqlalchemy==2.0.25
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
@@ -13,12 +13,13 @@ pydantic==2.5.3
 pydantic-settings==2.1.0
 email-validator==2.1.0
 opencv-python-headless==4.9.0.80
-scikit-image==0.22.0
+# scikit-image removed - let pip resolve it automatically via rembg dependency
 # rembg for background removal with BiRefNet models (state-of-the-art)
 # Using latest onnxruntime (1.17+ fixed executable stack issues)
 onnxruntime>=1.17.0
 rembg>=2.0.70
 # SAM (Segment Anything) for smart object selection - runs locally, no API needed
-torch==2.1.2
-torchvision==0.16.2
+# Using torch 2.4+ for numpy 2.x compatibility (required by scikit-image 0.26+)
+torch>=2.4.0
+torchvision>=0.19.0
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
