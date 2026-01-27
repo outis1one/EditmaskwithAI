@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     wget \
     git \
+    execstack \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
