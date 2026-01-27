@@ -22,6 +22,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies for OpenCV, rembg, SAM, and image processing
+# execstack is needed to fix onnxruntime executable stack issue in containers
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -31,11 +32,16 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     wget \
     git \
+    execstack \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Fix onnxruntime executable stack issue in containers
+# This clears the executable stack requirement from the onnxruntime library
+RUN execstack -c /usr/local/lib/python3.11/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-311-x86_64-linux-gnu.so || true
 
 # Pre-download rembg model (u2net) to avoid first-run delay
 # Note: This downloads the U2-Net model (~170MB) during build
