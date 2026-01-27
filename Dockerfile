@@ -22,6 +22,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies for OpenCV, rembg, SAM, and image processing
+# execstack is needed to fix onnxruntime executable stack issue in containers
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -31,6 +32,7 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     wget \
     git \
+    execstack \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
