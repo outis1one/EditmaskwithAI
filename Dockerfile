@@ -39,13 +39,10 @@ RUN apt-get update && apt-get install -y \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Fix onnxruntime executable stack issue in containers
-# This clears the executable stack requirement from the onnxruntime library
-RUN execstack -c /usr/local/lib/python3.11/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-311-x86_64-linux-gnu.so || true
-
-# Pre-download rembg model (u2net) to avoid first-run delay
-# Note: This downloads the U2-Net model (~170MB) during build
-RUN python -c "from rembg import remove; print('rembg model downloaded')"
+# Try to pre-download rembg model, but don't fail build if onnxruntime has issues
+# (onnxruntime can have executable stack issues in some Docker environments)
+# If this fails, Remove Background feature will be disabled
+RUN python -c "from rembg import remove; print('rembg ready')" || echo "WARNING: rembg not available - Remove Background will be disabled"
 
 # Copy backend application
 COPY backend/ .
