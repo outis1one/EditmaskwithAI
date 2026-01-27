@@ -49,14 +49,20 @@ class Ai_inpaint_class extends Base_tools_class {
         }
 
         var settings = {
-            title: 'AI Inpaint',
+            title: 'AI Edit Selection',
             params: [
                 {
+                    name: "mode",
+                    title: "Edit Mode:",
+                    value: "inpaint",
+                    values: ["inpaint", "transform"]
+                },
+                {
                     name: "prompt",
-                    title: "Describe what you want:",
+                    title: "AI Inpaint - Describe replacement:",
                     type: "textarea",
                     value: "",
-                    placeholder: "e.g., 'a red rose', 'remove the object', 'blue sky with clouds'"
+                    placeholder: "AI will REPLACE the selection with what you describe.\nExamples: 'a red rose', 'empty background', 'blue sky'"
                 },
                 {
                     name: "negative_prompt",
@@ -66,19 +72,162 @@ class Ai_inpaint_class extends Base_tools_class {
                 },
                 {
                     name: "strength",
-                    title: "Edit Strength:",
+                    title: "AI Edit Strength:",
                     type: "range",
                     value: 80,
                     range: [1, 100],
                     step: 1
+                },
+                {
+                    name: "scale",
+                    title: "Transform - Scale %:",
+                    type: "range",
+                    value: 100,
+                    range: [10, 200],
+                    step: 5
                 }
             ],
+            on_load: function(el) {
+                // Add info text
+                var infoDiv = document.createElement('div');
+                infoDiv.className = 'ai-inpaint-info';
+                infoDiv.innerHTML = '<p style="font-size:12px;color:#aaa;margin-bottom:10px;">' +
+                    '<strong>Inpaint Mode:</strong> AI replaces the selected area with generated content.<br>' +
+                    '<strong>Transform Mode:</strong> Scale, shrink, or enlarge the selection without AI.<br>' +
+                    '<em>Tip: To shrink something by 35%, use Transform mode with Scale at 65%.</em></p>';
+
+                var dialogContent = el.querySelector('.dialog_content');
+                if (dialogContent && dialogContent.firstChild) {
+                    dialogContent.insertBefore(infoDiv, dialogContent.firstChild);
+                }
+            },
             on_finish: async function (params) {
-                await _this.executeInpaint(params);
+                if (params.mode === 'transform') {
+                    await _this.executeTransform(params);
+                } else {
+                    await _this.executeInpaint(params);
+                }
             },
         };
 
         this.POP.show(settings);
+    }
+
+    /**
+     * Execute transform operation (scale without AI)
+     */
+    async executeTransform(params) {
+        if (this.isProcessing) {
+            alertify.warning('Already processing... please wait');
+            return;
+        }
+
+        // Check if we have an image layer
+        if (config.layer.type != 'image') {
+            alertify.error('Please select an image layer');
+            return;
+        }
+
+        var maskCanvas = window.smartSelectMask?.canvas;
+        if (!maskCanvas) {
+            alertify.error('No selection mask found');
+            return;
+        }
+
+        this.isProcessing = true;
+        alertify.message('Transforming selection...');
+
+        try {
+            var layer = config.layer;
+            var scale = params.scale / 100;
+
+            // Get mask bounds
+            var maskCtx = maskCanvas.getContext('2d');
+            var imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+            var minX = maskCanvas.width, minY = maskCanvas.height;
+            var maxX = 0, maxY = 0;
+
+            for (var y = 0; y < maskCanvas.height; y++) {
+                for (var x = 0; x < maskCanvas.width; x++) {
+                    var i = (y * maskCanvas.width + x) * 4;
+                    if (imageData.data[i] > 128) {
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                    }
+                }
+            }
+
+            if (maxX <= minX || maxY <= minY) {
+                throw new Error('Selection is too small');
+            }
+
+            var selWidth = maxX - minX + 1;
+            var selHeight = maxY - minY + 1;
+            var centerX = minX + selWidth / 2;
+            var centerY = minY + selHeight / 2;
+
+            // Extract selected pixels
+            var extractCanvas = document.createElement('canvas');
+            extractCanvas.width = layer.width_original;
+            extractCanvas.height = layer.height_original;
+            var extractCtx = extractCanvas.getContext('2d');
+            extractCtx.drawImage(layer.link, 0, 0);
+            extractCtx.globalCompositeOperation = 'destination-in';
+            extractCtx.drawImage(maskCanvas, 0, 0);
+
+            // Create result canvas
+            var resultCanvas = document.createElement('canvas');
+            resultCanvas.width = layer.width_original;
+            resultCanvas.height = layer.height_original;
+            var resultCtx = resultCanvas.getContext('2d');
+
+            // Draw original image
+            resultCtx.drawImage(layer.link, 0, 0);
+
+            // Remove original selection (create hole)
+            resultCtx.globalCompositeOperation = 'destination-out';
+            resultCtx.drawImage(maskCanvas, 0, 0);
+
+            // Calculate scaled dimensions
+            var newWidth = selWidth * scale;
+            var newHeight = selHeight * scale;
+            var newX = centerX - newWidth / 2;
+            var newY = centerY - newHeight / 2;
+
+            // Draw scaled selection back
+            resultCtx.globalCompositeOperation = 'source-over';
+
+            // Create temp canvas for just the selection
+            var selCanvas = document.createElement('canvas');
+            selCanvas.width = selWidth;
+            selCanvas.height = selHeight;
+            var selCtx = selCanvas.getContext('2d');
+            selCtx.drawImage(extractCanvas, minX, minY, selWidth, selHeight, 0, 0, selWidth, selHeight);
+
+            // Draw scaled
+            resultCtx.drawImage(selCanvas, 0, 0, selWidth, selHeight, newX, newY, newWidth, newHeight);
+
+            // Apply result
+            app.State.do_action(
+                new app.Actions.Bundle_action('transform_selection', 'Transform Selection', [
+                    new app.Actions.Update_layer_image_action(resultCanvas)
+                ])
+            );
+
+            // Clear selection
+            window.smartSelectMask = null;
+            config.need_render = true;
+
+            alertify.success('Transform complete! Selection scaled to ' + params.scale + '%');
+
+        } catch (error) {
+            console.error('Transform error:', error);
+            alertify.error('Transform failed: ' + error.message);
+        } finally {
+            this.isProcessing = false;
+        }
     }
 
     /**
