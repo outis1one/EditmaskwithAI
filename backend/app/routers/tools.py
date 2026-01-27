@@ -128,51 +128,169 @@ async def inpaint_base64(request: InpaintRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RemoveBackgroundRequestV2(BaseModel):
+    image: str  # Base64 encoded image
+    model: Optional[str] = "auto"  # "auto", "u2net", "rembg", "birefnet"
+
+
 @router.post("/remove-background-base64")
 async def remove_background_base64(request: RemoveBackgroundRequest):
     """
-    Remove background from a base64 encoded image using rembg with BiRefNet.
-    BiRefNet is state-of-the-art for background removal (better than u2net).
+    Remove background from a base64 encoded image.
+    Tries multiple methods: U2Net (direct), rembg with BiRefNet, rembg default.
     Returns base64 encoded PNG with transparent background.
     Used by miniPaint frontend.
     """
     try:
-        from rembg import remove, new_session
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="rembg not installed. Run: pip install rembg"
-        )
-
-    try:
         # Decode base64 image
         image_bytes = base64.b64decode(request.image)
+        img = Image.open(BytesIO(image_bytes)).convert('RGB')
 
-        # Use BiRefNet model for best quality (state-of-the-art)
-        # Falls back to default model if BiRefNet not available
+        result_bytes = None
+        method_used = None
+
+        # Try U2Net first (direct implementation, no rembg dependency issues)
         try:
-            session = new_session("birefnet-general")
-            result_bytes = remove(image_bytes, session=session)
-        except Exception:
-            # Fallback to default model
-            result_bytes = remove(image_bytes)
+            result_bytes = await _remove_background_u2net(img)
+            method_used = "u2net"
+        except Exception as e:
+            print(f"U2Net failed: {e}")
+
+        # Fall back to rembg if U2Net failed
+        if result_bytes is None:
+            try:
+                from rembg import remove, new_session
+                try:
+                    session = new_session("birefnet-general")
+                    result_bytes = remove(image_bytes, session=session)
+                    method_used = "birefnet"
+                except Exception:
+                    result_bytes = remove(image_bytes)
+                    method_used = "rembg-default"
+            except ImportError:
+                pass
+            except Exception as e:
+                print(f"rembg failed: {e}")
+
+        if result_bytes is None:
+            raise HTTPException(
+                status_code=500,
+                detail="No background removal method available. Install u2net or rembg."
+            )
 
         # Convert result to base64
         result_b64 = base64.b64encode(result_bytes).decode('utf-8')
 
         # Get dimensions
-        img = Image.open(BytesIO(result_bytes))
+        result_img = Image.open(BytesIO(result_bytes))
 
         return {
             "result": result_b64,
-            "width": img.width,
-            "height": img.height
+            "width": result_img.width,
+            "height": result_img.height,
+            "method": method_used
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Global U2Net model cache
+_u2net_model = None
+
+
+async def _remove_background_u2net(img: Image.Image) -> bytes:
+    """
+    Remove background using U2Net model directly.
+    This avoids rembg dependency issues while providing good quality.
+    """
+    global _u2net_model
+
+    import torch
+    from pathlib import Path
+
+    # Check for U2Net model
+    models_dir = Path('/app/data/models')
+    u2net_path = models_dir / 'u2net.pth'
+
+    # Also check alternative names
+    if not u2net_path.exists():
+        for alt_name in ['u2net.onnx', 'u2netp.pth', 'u2net_human_seg.pth']:
+            alt_path = models_dir / alt_name
+            if alt_path.exists():
+                u2net_path = alt_path
+                break
+
+    if not u2net_path.exists():
+        raise FileNotFoundError(
+            f"U2Net model not found at {u2net_path}. "
+            "Download from: https://github.com/xuebinqin/U-2-Net"
+        )
+
+    # Load model if not cached
+    if _u2net_model is None:
+        print(f"Loading U2Net model from {u2net_path}")
+
+        if str(u2net_path).endswith('.onnx'):
+            # Use ONNX runtime
+            import onnxruntime as ort
+            _u2net_model = ort.InferenceSession(str(u2net_path))
+        else:
+            # Use PyTorch
+            from app.services.u2net_model import U2NET
+            _u2net_model = U2NET(3, 1)
+            _u2net_model.load_state_dict(torch.load(str(u2net_path), map_location='cpu'))
+            _u2net_model.eval()
+
+        print("U2Net model loaded")
+
+    # Preprocess image
+    img_np = np.array(img)
+    original_size = img.size
+
+    # Resize to model input size
+    input_size = 320
+    img_resized = img.resize((input_size, input_size), Image.Resampling.BILINEAR)
+    img_np = np.array(img_resized).astype(np.float32)
+
+    # Normalize
+    img_np = img_np / 255.0
+    img_np = (img_np - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+    img_np = img_np.transpose(2, 0, 1)  # HWC to CHW
+    img_np = np.expand_dims(img_np, 0)  # Add batch dimension
+
+    # Run inference
+    if hasattr(_u2net_model, 'run'):
+        # ONNX runtime
+        input_name = _u2net_model.get_inputs()[0].name
+        outputs = _u2net_model.run(None, {input_name: img_np})
+        mask = outputs[0][0, 0]
+    else:
+        # PyTorch
+        with torch.no_grad():
+            input_tensor = torch.from_numpy(img_np).float()
+            d1, d2, d3, d4, d5, d6, d7 = _u2net_model(input_tensor)
+            mask = d1[0, 0].numpy()
+
+    # Post-process mask
+    mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
+    mask = (mask * 255).astype(np.uint8)
+
+    # Resize mask back to original size
+    mask_img = Image.fromarray(mask).resize(original_size, Image.Resampling.BILINEAR)
+
+    # Apply mask to original image
+    result = img.convert('RGBA')
+    result.putalpha(mask_img)
+
+    # Save to bytes
+    buffer = BytesIO()
+    result.save(buffer, format='PNG')
+    return buffer.getvalue()
 
 
 @router.post("/remove-background")

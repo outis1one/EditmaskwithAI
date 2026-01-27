@@ -334,7 +334,7 @@ class File_my_library_class {
             title: 'My Library (' + assets.length + ' assets)',
             params: [],
             html: html,
-            className: 'library-dialog',
+            className: 'wide',
             on_load: function(el) {
                 // Add click handlers
                 el.querySelectorAll('.insert-btn').forEach(function(btn) {

@@ -245,6 +245,143 @@
 	margin-right: auto;
 }
 
+/* Shape/Library Tabs */
+#popups .popup .shape-tabs {
+	display: flex;
+	gap: 0;
+	margin-bottom: 1rem;
+	border-bottom: 2px solid var(--border-color);
+}
+
+#popups .popup .shape-tab {
+	padding: 0.8rem 1.5rem;
+	background: transparent;
+	border: none;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -2px;
+	cursor: pointer;
+	color: var(--text-color-muted);
+	font-size: 1rem;
+	transition: color 0.2s, border-color 0.2s;
+}
+
+#popups .popup .shape-tab:hover {
+	color: var(--text-color);
+}
+
+#popups .popup .shape-tab.active {
+	color: var(--link-color);
+	border-bottom-color: var(--link-color);
+}
+
+#popups .popup .library-loading {
+	text-align: center;
+	padding: 2rem;
+	color: var(--text-color-muted);
+}
+
+/* My Library Browser Styles */
+#popups .popup .library-browser {
+	max-height: calc(60vh - 100px);
+	overflow-y: auto;
+}
+
+#popups .popup .library-categories {
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+}
+
+#popups .popup .library-category h3 {
+	color: var(--text-color);
+	font-size: 1.4rem;
+	margin-bottom: 0.8rem;
+	padding-bottom: 0.4rem;
+	border-bottom: 1px solid var(--border-color);
+}
+
+#popups .popup .library-items {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1rem;
+}
+
+#popups .popup .library-item {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 120px;
+	padding: 0.8rem;
+	background: var(--input-background-color);
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	cursor: pointer;
+	transition: background 0.2s, border-color 0.2s;
+}
+
+#popups .popup .library-item:hover {
+	background: var(--input-background-color-hover);
+	border-color: var(--link-color);
+}
+
+#popups .popup .library-item img {
+	width: 100px;
+	height: 80px;
+	object-fit: contain;
+	background: repeating-conic-gradient(#666 0% 25%, #888 0% 50%) 50% / 10px 10px;
+	border-radius: 2px;
+	margin-bottom: 0.5rem;
+}
+
+#popups .popup .library-item-name {
+	font-size: 0.85rem;
+	text-align: center;
+	color: var(--text-color);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	width: 100%;
+	margin-bottom: 0.5rem;
+}
+
+#popups .popup .library-item-actions {
+	display: flex;
+	gap: 0.5rem;
+}
+
+#popups .popup .library-item-actions button {
+	font-size: 0.75rem;
+	padding: 0.3rem 0.6rem;
+	background: var(--button-background-color);
+	border: 1px solid var(--border-color);
+	border-radius: 3px;
+	cursor: pointer;
+	color: var(--text-color);
+}
+
+#popups .popup .library-item-actions .insert-btn {
+	background: #2a6d2a;
+}
+
+#popups .popup .library-item-actions .insert-btn:hover {
+	background: #3a8d3a;
+}
+
+#popups .popup .library-item-actions .delete-btn {
+	background: #6d2a2a;
+}
+
+#popups .popup .library-item-actions .delete-btn:hover {
+	background: #8d3a3a;
+}
+
+/* Library empty state */
+#popups .popup .library-empty {
+	text-align: center;
+	padding: 2rem;
+	color: var(--text-color-muted);
+}
+
 @media screen and (max-width:500px){
 	#popups .popup {
 		max-height: calc(80vh - 20px); /* mobile phones has bottom menu */
