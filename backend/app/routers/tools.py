@@ -33,6 +33,10 @@ class InpaintRequest(BaseModel):
     guidance_scale: Optional[float] = 7.5
 
 
+class RemoveBackgroundRequest(BaseModel):
+    image: str  # Base64 encoded image
+
+
 @router.post("/smart-select-base64")
 async def smart_select_base64(request: SmartSelectRequest):
     """
@@ -116,6 +120,46 @@ async def inpaint_base64(request: InpaintRequest):
 
         return {
             "result": result_b64
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/remove-background-base64")
+async def remove_background_base64(request: RemoveBackgroundRequest):
+    """
+    Remove background from a base64 encoded image using rembg.
+    Returns base64 encoded PNG with transparent background.
+    Used by miniPaint frontend.
+    """
+    try:
+        from rembg import remove
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="rembg not installed. Run: pip install rembg"
+        )
+
+    try:
+        # Decode base64 image
+        image_bytes = base64.b64decode(request.image)
+
+        # Remove background
+        result_bytes = remove(image_bytes)
+
+        # Convert result to base64
+        result_b64 = base64.b64encode(result_bytes).decode('utf-8')
+
+        # Get dimensions
+        img = Image.open(BytesIO(result_bytes))
+
+        return {
+            "result": result_b64,
+            "width": img.width,
+            "height": img.height
         }
 
     except Exception as e:
