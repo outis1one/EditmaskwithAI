@@ -291,6 +291,29 @@ const menuDefinition = [
 				name: 'Remove Background (AI)',
 				ellipsis: true,
 				target: 'image/remove_background.remove_background'
+			},
+			{
+				divider: true
+			},
+			{
+				name: 'Selection Effects',
+				children: [
+					{
+						name: 'Invert Selection',
+						ellipsis: true,
+						target: 'image/selection_effects.invert_selection'
+					},
+					{
+						name: 'Adjust Selection',
+						ellipsis: true,
+						target: 'image/selection_effects.adjust_selection'
+					},
+					{
+						name: 'Greyscale Selection',
+						ellipsis: true,
+						target: 'image/selection_effects.greyscale_selection'
+					}
+				]
 			}
 		]
 	},
