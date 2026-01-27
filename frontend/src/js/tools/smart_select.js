@@ -394,8 +394,11 @@ class Smart_select_class extends Base_tools_class {
 
     /**
      * Copy selected area to a new layer
+     * The result preserves the mask shape with transparency
      */
     copyToLayer() {
+        var _this = this;
+
         if (!this.currentMask || !this.maskCanvas) {
             alertify.error('No selection to copy');
             return;
@@ -409,27 +412,27 @@ class Smart_select_class extends Base_tools_class {
 
         // Get the bounds of the selection
         var bounds = this.selectionBounds;
-        if (!bounds || !bounds.origMinX === undefined) {
+        if (!bounds || bounds.origMinX === undefined) {
             alertify.error('Invalid selection bounds');
             return;
         }
 
-        // Create canvas with just the selected pixels
-        var canvas = document.createElement('canvas');
-        canvas.width = layer.width_original;
-        canvas.height = layer.height_original;
-        var ctx = canvas.getContext('2d');
+        // Create canvas with just the selected pixels (masked)
+        var maskedCanvas = document.createElement('canvas');
+        maskedCanvas.width = layer.width_original;
+        maskedCanvas.height = layer.height_original;
+        var maskedCtx = maskedCanvas.getContext('2d');
 
         // Draw original image
-        ctx.drawImage(layer.link, 0, 0);
+        maskedCtx.drawImage(layer.link, 0, 0);
 
-        // Apply mask - keep only selected pixels
-        ctx.globalCompositeOperation = 'destination-in';
-        ctx.drawImage(this.maskCanvas, 0, 0);
+        // Apply mask - keep only selected pixels (this creates the shape!)
+        maskedCtx.globalCompositeOperation = 'destination-in';
+        maskedCtx.drawImage(this.maskCanvas, 0, 0);
 
-        // Crop to selection bounds
-        var cropWidth = bounds.origMaxX - bounds.origMinX;
-        var cropHeight = bounds.origMaxY - bounds.origMinY;
+        // Crop to selection bounds (still preserves transparency within the crop)
+        var cropWidth = bounds.origMaxX - bounds.origMinX + 1;
+        var cropHeight = bounds.origMaxY - bounds.origMinY + 1;
 
         if (cropWidth <= 0 || cropHeight <= 0) {
             alertify.error('Selection is too small');
@@ -441,8 +444,9 @@ class Smart_select_class extends Base_tools_class {
         croppedCanvas.height = cropHeight;
         var croppedCtx = croppedCanvas.getContext('2d');
 
+        // Copy only the selected region (transparency is preserved)
         croppedCtx.drawImage(
-            canvas,
+            maskedCanvas,
             bounds.origMinX, bounds.origMinY, cropWidth, cropHeight,
             0, 0, cropWidth, cropHeight
         );
@@ -455,12 +459,12 @@ class Smart_select_class extends Base_tools_class {
         var params = {
             x: Math.round(layer.x + bounds.origMinX * scaleX),
             y: Math.round(layer.y + bounds.origMinY * scaleY),
-            width: cropWidth,
-            height: cropHeight,
+            width: Math.round(cropWidth * scaleX),
+            height: Math.round(cropHeight * scaleY),
             width_original: cropWidth,
             height_original: cropHeight,
             type: 'image',
-            name: 'AI Selection Copy',
+            name: config.layer.name + ' (Selection)',
             data: croppedCanvas.toDataURL('image/png')
         };
 
@@ -470,13 +474,22 @@ class Smart_select_class extends Base_tools_class {
             ])
         );
 
-        alertify.success('Selection copied to new layer!');
+        // Enable transparency so the user can see the mask shape
+        if (config.TRANSPARENCY == false) {
+            config.TRANSPARENCY = true;
+            _this.Base_layers.render();
+        }
+
+        alertify.success('Selection copied to new layer! Switch to Select tool to move it.');
     }
 
     /**
      * Cut selected area to a new layer (copy + delete from original)
+     * The result preserves the mask shape with transparency
      */
     cutToLayer() {
+        var _this = this;
+
         if (!this.currentMask || !this.maskCanvas) {
             alertify.error('No selection to cut');
             return;
@@ -495,22 +508,22 @@ class Smart_select_class extends Base_tools_class {
             return;
         }
 
-        // Create canvas with just the selected pixels
-        var canvas = document.createElement('canvas');
-        canvas.width = layer.width_original;
-        canvas.height = layer.height_original;
-        var ctx = canvas.getContext('2d');
+        // Create canvas with just the selected pixels (masked)
+        var maskedCanvas = document.createElement('canvas');
+        maskedCanvas.width = layer.width_original;
+        maskedCanvas.height = layer.height_original;
+        var maskedCtx = maskedCanvas.getContext('2d');
 
         // Draw original image
-        ctx.drawImage(layer.link, 0, 0);
+        maskedCtx.drawImage(layer.link, 0, 0);
 
-        // Apply mask - keep only selected pixels
-        ctx.globalCompositeOperation = 'destination-in';
-        ctx.drawImage(this.maskCanvas, 0, 0);
+        // Apply mask - keep only selected pixels (this creates the shape!)
+        maskedCtx.globalCompositeOperation = 'destination-in';
+        maskedCtx.drawImage(this.maskCanvas, 0, 0);
 
-        // Crop to selection bounds
-        var cropWidth = bounds.origMaxX - bounds.origMinX;
-        var cropHeight = bounds.origMaxY - bounds.origMinY;
+        // Crop to selection bounds (still preserves transparency within the crop)
+        var cropWidth = bounds.origMaxX - bounds.origMinX + 1;
+        var cropHeight = bounds.origMaxY - bounds.origMinY + 1;
 
         if (cropWidth <= 0 || cropHeight <= 0) {
             alertify.error('Selection is too small');
@@ -522,8 +535,9 @@ class Smart_select_class extends Base_tools_class {
         croppedCanvas.height = cropHeight;
         var croppedCtx = croppedCanvas.getContext('2d');
 
+        // Copy only the selected region (transparency is preserved)
         croppedCtx.drawImage(
-            canvas,
+            maskedCanvas,
             bounds.origMinX, bounds.origMinY, cropWidth, cropHeight,
             0, 0, cropWidth, cropHeight
         );
@@ -536,12 +550,12 @@ class Smart_select_class extends Base_tools_class {
         var params = {
             x: Math.round(layer.x + bounds.origMinX * scaleX),
             y: Math.round(layer.y + bounds.origMinY * scaleY),
-            width: cropWidth,
-            height: cropHeight,
+            width: Math.round(cropWidth * scaleX),
+            height: Math.round(cropHeight * scaleY),
             width_original: cropWidth,
             height_original: cropHeight,
             type: 'image',
-            name: 'AI Selection Cut',
+            name: config.layer.name + ' (Cut)',
             data: croppedCanvas.toDataURL('image/png')
         };
 
@@ -554,7 +568,7 @@ class Smart_select_class extends Base_tools_class {
         // Draw original image
         holeCtx.drawImage(layer.link, 0, 0);
 
-        // Cut out the mask area
+        // Cut out the mask area (creates transparent hole in original shape)
         holeCtx.globalCompositeOperation = 'destination-out';
         holeCtx.drawImage(this.maskCanvas, 0, 0);
 
@@ -566,10 +580,16 @@ class Smart_select_class extends Base_tools_class {
             ])
         );
 
+        // Enable transparency so the user can see the mask shape
+        if (config.TRANSPARENCY == false) {
+            config.TRANSPARENCY = true;
+            _this.Base_layers.render();
+        }
+
         // Clear the selection
         this.clearSelection();
 
-        alertify.success('Selection cut to new layer!');
+        alertify.success('Selection cut to new layer! Switch to Select tool to move it.');
     }
 
     /**
