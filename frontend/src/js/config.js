@@ -94,7 +94,12 @@ config.TOOLS = [
 	},
 	{
 		name: 'smart_select',
-		title: 'Smart Select (AI)',
+		title: 'Smart Select (AI) - Click to select',
+		attributes: {},
+	},
+	{
+		name: 'brush_select',
+		title: 'Brush Select (AI) - Paint over to select',
 		attributes: {},
 	},
 	{
