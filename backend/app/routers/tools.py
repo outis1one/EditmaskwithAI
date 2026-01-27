@@ -203,6 +203,32 @@ async def remove_background_base64(request: RemoveBackgroundRequest):
 _u2net_model = None
 
 
+async def _download_u2net_model(models_dir):
+    """Auto-download U2Net model (lightweight version ~4MB)"""
+    import urllib.request
+    from pathlib import Path
+
+    models_dir = Path(models_dir)
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # Download lightweight u2netp model (only 4MB)
+    url = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
+    dest_path = models_dir / "u2netp.onnx"
+
+    print(f"Downloading U2Net model from {url}...")
+
+    def download_progress(count, block_size, total_size):
+        if total_size > 0:
+            percent = min(100, count * block_size * 100 // total_size)
+            if count % 100 == 0:
+                print(f"  Download progress: {percent}%")
+
+    urllib.request.urlretrieve(url, str(dest_path), download_progress)
+    print(f"U2Net model downloaded to {dest_path}")
+
+    return dest_path
+
+
 async def _remove_background_u2net(img: Image.Image) -> bytes:
     """
     Remove background using U2Net model directly.
@@ -226,9 +252,24 @@ async def _remove_background_u2net(img: Image.Image) -> bytes:
                 break
 
     if not u2net_path.exists():
+        # Try to auto-download the model
+        print("U2Net model not found, attempting to download...")
+        try:
+            await _download_u2net_model(models_dir)
+            # Check again
+            for alt_name in ['u2net.onnx', 'u2netp.onnx', 'u2net.pth']:
+                alt_path = models_dir / alt_name
+                if alt_path.exists():
+                    u2net_path = alt_path
+                    break
+        except Exception as download_error:
+            print(f"Auto-download failed: {download_error}")
+
+    if not u2net_path.exists():
         raise FileNotFoundError(
-            f"U2Net model not found at {u2net_path}. "
-            "Download from: https://github.com/xuebinqin/U-2-Net"
+            "U2Net model not found. To fix this, run:\n"
+            "  docker exec -it ai-photo-edit-backend python /scripts/download_u2net_model.py\n"
+            "Or manually download from: https://github.com/danielgatis/rembg/releases"
         )
 
     # Load model if not cached

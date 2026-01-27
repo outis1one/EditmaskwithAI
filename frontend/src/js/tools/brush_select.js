@@ -327,10 +327,14 @@ class Brush_select_class extends Base_tools_class {
                 canvas.width = config.layer.width_original;
                 canvas.height = config.layer.height_original;
                 var ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0);
+                // Scale the mask image to match the layer dimensions
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                 resolve(canvas);
             };
-            img.onerror = reject;
+            img.onerror = function(e) {
+                console.error('Failed to decode mask image:', e);
+                reject(e);
+            };
             img.src = 'data:image/png;base64,' + maskBase64;
         });
     }

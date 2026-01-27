@@ -83,8 +83,10 @@ config.TOOLS = [
 	{
 		name: 'select',
 		title: 'Select object tool',
+		on_activate: 'on_activate',
 		attributes: {
 			auto_select: true,
+			keep_ratio: true,
 		},
 	},
 	{

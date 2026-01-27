@@ -31,6 +31,7 @@ var template = `
 	<div class="row">
 		<span class="trn label">Height:</span>
 		<input type="number" id="detail_height" step="any" />
+		<button class="extra trn" type="button" id="toggle_aspect_lock" title="Lock Aspect Ratio" style="font-size:16px;">&#128279;</button>
 	</div>
 	<hr />
 	<div class="row">
@@ -124,6 +125,8 @@ class GUI_details_class {
 		this.Helper = new Helper_class();
 		this.layer_details_active = false;
 		this.Tools_translate = new Tools_translate_class();
+		this.aspect_locked = true; // Default to locked for image layers
+		this.aspect_ratio = 1; // Will be calculated from layer dimensions
 	}
 
 	render_main_details() {
@@ -139,6 +142,7 @@ class GUI_details_class {
 		this.render_general('y', events);
 		this.render_general('width', events);
 		this.render_general('height', events);
+		this.render_aspect_lock(events);
 
 		this.render_general('rotate', events);
 		this.render_general('opacity', events);
@@ -283,6 +287,69 @@ class GUI_details_class {
 				
 				config.layer[key] = value;
 				config.need_render = true;
+			});
+		}
+	}
+
+	render_aspect_lock(events) {
+		var _this = this;
+		var layer = config.layer;
+		var lockBtn = document.getElementById('toggle_aspect_lock');
+
+		if (!lockBtn) return;
+
+		// Update aspect ratio from current layer dimensions
+		if (layer && layer.width && layer.height) {
+			this.aspect_ratio = layer.width / layer.height;
+		}
+
+		// Update button appearance based on lock state
+		if (this.aspect_locked) {
+			lockBtn.style.background = '#4a4';
+			lockBtn.title = 'Aspect Ratio Locked - Click to Unlock';
+		} else {
+			lockBtn.style.background = '';
+			lockBtn.title = 'Aspect Ratio Unlocked - Click to Lock';
+		}
+
+		if (events) {
+			lockBtn.addEventListener('click', function() {
+				_this.aspect_locked = !_this.aspect_locked;
+
+				// Update aspect ratio when locking
+				if (_this.aspect_locked && config.layer) {
+					_this.aspect_ratio = config.layer.width / config.layer.height;
+				}
+
+				_this.render_aspect_lock(false);
+			});
+
+			// Override width change to update height when locked
+			var widthInput = document.getElementById('detail_width');
+			var heightInput = document.getElementById('detail_height');
+
+			widthInput.addEventListener('input', function(e) {
+				if (_this.aspect_locked && config.layer) {
+					var units = _this.Tools_settings.get_setting('default_units');
+					var resolution = _this.Tools_settings.get_setting('resolution');
+					var newWidth = _this.Helper.get_internal_unit(this.value, units, resolution);
+					var newHeight = newWidth / _this.aspect_ratio;
+
+					heightInput.value = _this.Helper.get_user_unit(newHeight, units, resolution);
+					config.layer.height = newHeight;
+				}
+			});
+
+			heightInput.addEventListener('input', function(e) {
+				if (_this.aspect_locked && config.layer) {
+					var units = _this.Tools_settings.get_setting('default_units');
+					var resolution = _this.Tools_settings.get_setting('resolution');
+					var newHeight = _this.Helper.get_internal_unit(this.value, units, resolution);
+					var newWidth = newHeight * _this.aspect_ratio;
+
+					widthInput.value = _this.Helper.get_user_unit(newWidth, units, resolution);
+					config.layer.width = newWidth;
+				}
 			});
 		}
 	}
