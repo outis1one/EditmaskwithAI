@@ -104,6 +104,28 @@ config.TOOLS = [
 		attributes: {},
 	},
 	{
+		name: 'magic_wand',
+		title: 'Magic Wand (Color Select)',
+		attributes: {
+			tolerance: {
+				value: 30,
+				min: 0,
+				max: 100,
+			},
+			contiguous: true,
+		},
+	},
+	{
+		name: 'lasso',
+		title: 'Lasso (Freehand Select)',
+		attributes: {},
+	},
+	{
+		name: 'ellipse_select',
+		title: 'Ellipse Selection',
+		attributes: {},
+	},
+	{
 		name: 'brush',
 		attributes: {
 			size: 4,

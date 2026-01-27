@@ -1,8 +1,7 @@
 /**
- * Smart Select Tool - Uses SAM (Segment Anything Model) for AI-powered selection
- * Click on any object to automatically select it
- * Shift+Click to add to existing selection (multi-select)
- * Supports: Copy to layer, Cut to layer, Delete selection, AI Inpaint
+ * Magic Wand Selection Tool - Selects areas by color similarity
+ * Click to select similar colors, Shift+Click to add to selection
+ * Like GIMP's magic wand / fuzzy select tool
  */
 
 import app from './../app.js';
@@ -10,24 +9,20 @@ import config from './../config.js';
 import Base_tools_class from './../core/base-tools.js';
 import Base_layers_class from './../core/base-layers.js';
 import Helper_class from './../libs/helpers.js';
-import Dialog_class from './../libs/popup.js';
 import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
-import apiService from './../services/api.js';
 
-class Smart_select_class extends Base_tools_class {
+class Magic_wand_class extends Base_tools_class {
 
     constructor(ctx) {
         super();
         this.Base_layers = new Base_layers_class();
         this.Helper = new Helper_class();
-        this.POP = new Dialog_class();
         this.ctx = ctx;
-        this.name = 'smart_select';
+        this.name = 'magic_wand';
 
         // Store the current mask data
         this.currentMask = null;
         this.maskCanvas = null;
-        this.isProcessing = false;
         this.selectionBounds = null;
 
         // Marching ants animation
@@ -81,7 +76,6 @@ class Smart_select_class extends Base_tools_class {
     startMarchingAnts() {
         var _this = this;
 
-        // Animate every 100ms for smooth marching ants
         setInterval(function() {
             if (_this.currentMask) {
                 _this.marchingAntsOffset++;
@@ -93,15 +87,11 @@ class Smart_select_class extends Base_tools_class {
         }, 100);
     }
 
-    async mousedown(e) {
+    mousedown(e) {
         var mouse = this.get_mouse_info(e);
 
         if (config.TOOL.name != this.name) return;
         if (mouse.click_valid == false) return;
-        if (this.isProcessing) {
-            alertify.warning('Processing... please wait');
-            return;
-        }
 
         // Check if we have an image layer
         if (config.layer.type != 'image') {
@@ -121,8 +111,11 @@ class Smart_select_class extends Base_tools_class {
             y = y * (config.layer.height_original / config.layer.height);
         }
 
+        x = Math.round(x);
+        y = Math.round(y);
+
         // Make sure click is within image bounds
-        if (x < 0 || y < 0 || x > config.layer.width_original || y > config.layer.height_original) {
+        if (x < 0 || y < 0 || x >= config.layer.width_original || y >= config.layer.height_original) {
             alertify.error('Click inside the image');
             return;
         }
@@ -130,119 +123,159 @@ class Smart_select_class extends Base_tools_class {
         // Check for Shift key - additive selection
         var isAdditive = e.shiftKey;
 
-        this.isProcessing = true;
-        alertify.message('AI is analyzing the image...');
+        // Get tool parameters
+        var params = this.getParams();
+        var tolerance = params.tolerance || 30;
+        var contiguous = params.contiguous !== false;
 
-        try {
-            // Get image data as base64
-            var imageData = this.getLayerImageData();
+        // Perform the selection
+        this.selectByColor(x, y, tolerance, contiguous, isAdditive);
+    }
 
-            // Call SAM API
-            var result = await apiService.smartSelect(imageData, Math.round(x), Math.round(y));
+    /**
+     * Select pixels by color similarity using flood fill algorithm
+     */
+    selectByColor(startX, startY, tolerance, contiguous, isAdditive) {
+        var layer = config.layer;
 
-            // Apply the mask as selection (additive if Shift is held)
-            this.applyMask(result.mask, result.bbox, isAdditive);
+        // Get the layer's image data
+        var srcCanvas = document.createElement('canvas');
+        srcCanvas.width = layer.width_original;
+        srcCanvas.height = layer.height_original;
+        var srcCtx = srcCanvas.getContext('2d');
+        srcCtx.drawImage(layer.link, 0, 0);
 
-            if (isAdditive && this.currentMask) {
-                alertify.success('Added to selection! Shift+Click to add more.');
-            } else {
-                alertify.success('Selection complete! Shift+Click to add more, Ctrl+C to copy, Ctrl+X to cut.');
+        var imageData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+        var data = imageData.data;
+        var width = srcCanvas.width;
+        var height = srcCanvas.height;
+
+        // Create mask canvas
+        var newMaskCanvas = document.createElement('canvas');
+        newMaskCanvas.width = width;
+        newMaskCanvas.height = height;
+        var maskCtx = newMaskCanvas.getContext('2d');
+        var maskImageData = maskCtx.createImageData(width, height);
+        var maskData = maskImageData.data;
+
+        // Get the color at the clicked point
+        var startIdx = (startY * width + startX) * 4;
+        var targetColor = {
+            r: data[startIdx],
+            g: data[startIdx + 1],
+            b: data[startIdx + 2],
+            a: data[startIdx + 3]
+        };
+
+        // Convert tolerance to 0-255 range
+        var sens = tolerance * 255 / 100;
+
+        if (contiguous) {
+            // Flood fill - only connected pixels
+            var visited = new Uint8Array(width * height);
+            var stack = [[startX, startY]];
+            var dx = [0, -1, +1, 0];
+            var dy = [-1, 0, 0, +1];
+
+            while (stack.length > 0) {
+                var point = stack.pop();
+                var px = point[0];
+                var py = point[1];
+
+                if (px < 0 || py < 0 || px >= width || py >= height) continue;
+
+                var idx = py * width + px;
+                if (visited[idx]) continue;
+                visited[idx] = 1;
+
+                var i = idx * 4;
+
+                // Check color similarity
+                if (Math.abs(data[i] - targetColor.r) <= sens &&
+                    Math.abs(data[i + 1] - targetColor.g) <= sens &&
+                    Math.abs(data[i + 2] - targetColor.b) <= sens &&
+                    Math.abs(data[i + 3] - targetColor.a) <= sens) {
+
+                    // Add to mask (white = selected)
+                    maskData[i] = 255;
+                    maskData[i + 1] = 255;
+                    maskData[i + 2] = 255;
+                    maskData[i + 3] = 255;
+
+                    // Add neighbors to stack
+                    for (var d = 0; d < 4; d++) {
+                        stack.push([px + dx[d], py + dy[d]]);
+                    }
+                }
             }
+        } else {
+            // Global - all matching pixels regardless of connection
+            for (var y = 0; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                    var i = (y * width + x) * 4;
 
-        } catch (error) {
-            console.error('Smart select error:', error);
-            alertify.error('Selection failed: ' + error.message);
-        } finally {
-            this.isProcessing = false;
+                    if (Math.abs(data[i] - targetColor.r) <= sens &&
+                        Math.abs(data[i + 1] - targetColor.g) <= sens &&
+                        Math.abs(data[i + 2] - targetColor.b) <= sens &&
+                        Math.abs(data[i + 3] - targetColor.a) <= sens) {
+
+                        maskData[i] = 255;
+                        maskData[i + 1] = 255;
+                        maskData[i + 2] = 255;
+                        maskData[i + 3] = 255;
+                    }
+                }
+            }
+        }
+
+        maskCtx.putImageData(maskImageData, 0, 0);
+
+        // If additive and we have an existing mask, combine them
+        if (isAdditive && this.maskCanvas) {
+            var combinedCanvas = document.createElement('canvas');
+            combinedCanvas.width = width;
+            combinedCanvas.height = height;
+            var combinedCtx = combinedCanvas.getContext('2d');
+
+            // Draw existing mask
+            combinedCtx.drawImage(this.maskCanvas, 0, 0);
+
+            // Add new mask
+            combinedCtx.globalCompositeOperation = 'lighter';
+            combinedCtx.drawImage(newMaskCanvas, 0, 0);
+
+            this.maskCanvas = combinedCanvas;
+        } else {
+            this.maskCanvas = newMaskCanvas;
+        }
+
+        this.currentMask = {
+            canvas: this.maskCanvas
+        };
+
+        // Store globally for other tools
+        window.smartSelectMask = this.currentMask;
+
+        // Calculate bounds and extract edge
+        this.calculateSelectionBounds();
+        this.extractContourPath();
+
+        config.need_render = true;
+        this.Base_layers.render();
+
+        if (isAdditive) {
+            alertify.success('Added to selection!');
+        } else {
+            alertify.success('Selection complete! Shift+Click to add more.');
         }
     }
 
-    /**
-     * Get the current layer's image data as base64
-     */
-    getLayerImageData() {
-        var canvas = document.createElement('canvas');
-        var ctx = canvas.getContext('2d');
-
-        canvas.width = config.layer.width_original;
-        canvas.height = config.layer.height_original;
-
-        // Draw the layer's image
-        ctx.drawImage(config.layer.link, 0, 0);
-
-        // Return as base64 (remove data:image/png;base64, prefix)
-        return canvas.toDataURL('image/png').split(',')[1];
-    }
-
-    /**
-     * Apply the SAM mask as a selection
-     * @param {string} maskBase64 - Base64 encoded mask image
-     * @param {Object} bbox - Bounding box {x, y, width, height}
-     * @param {boolean} isAdditive - If true, add to existing selection
-     */
-    applyMask(maskBase64, bbox, isAdditive) {
-        var _this = this;
-
-        // Create mask image
-        var maskImage = new Image();
-        maskImage.onload = function() {
-            // Create new mask canvas
-            var newMaskCanvas = document.createElement('canvas');
-            newMaskCanvas.width = config.layer.width_original;
-            newMaskCanvas.height = config.layer.height_original;
-            var newMaskCtx = newMaskCanvas.getContext('2d');
-            newMaskCtx.drawImage(maskImage, 0, 0);
-
-            // If additive and we have an existing mask, combine them
-            if (isAdditive && _this.maskCanvas) {
-                var combinedCanvas = document.createElement('canvas');
-                combinedCanvas.width = config.layer.width_original;
-                combinedCanvas.height = config.layer.height_original;
-                var combinedCtx = combinedCanvas.getContext('2d');
-
-                // Draw existing mask
-                combinedCtx.drawImage(_this.maskCanvas, 0, 0);
-
-                // Add new mask using 'lighter' composite to combine white areas
-                combinedCtx.globalCompositeOperation = 'lighter';
-                combinedCtx.drawImage(newMaskCanvas, 0, 0);
-
-                _this.maskCanvas = combinedCanvas;
-            } else {
-                _this.maskCanvas = newMaskCanvas;
-            }
-
-            _this.currentMask = {
-                canvas: _this.maskCanvas,
-                bbox: bbox
-            };
-
-            // Store globally for AI inpaint tool to access
-            window.smartSelectMask = _this.currentMask;
-
-            // Calculate selection bounds from mask
-            _this.calculateSelectionBounds();
-
-            // Extract contour path from the mask
-            _this.extractContourPath();
-
-            // Trigger re-render
-            config.need_render = true;
-            _this.Base_layers.render();
-        };
-        maskImage.src = 'data:image/png;base64,' + maskBase64;
-    }
-
-    /**
-     * Calculate the bounding box of the selection from the mask
-     */
     calculateSelectionBounds() {
         if (!this.maskCanvas) return;
 
         var maskCtx = this.maskCanvas.getContext('2d');
         var imageData = maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
 
-        // Find bounding box of selection
         var minX = this.maskCanvas.width, minY = this.maskCanvas.height;
         var maxX = 0, maxY = 0;
         var hasSelection = false;
@@ -250,7 +283,7 @@ class Smart_select_class extends Base_tools_class {
         for (var y = 0; y < this.maskCanvas.height; y++) {
             for (var x = 0; x < this.maskCanvas.width; x++) {
                 var i = (y * this.maskCanvas.width + x) * 4;
-                if (imageData.data[i] > 128) { // White pixel in mask
+                if (imageData.data[i] > 128) {
                     hasSelection = true;
                     minX = Math.min(minX, x);
                     minY = Math.min(minY, y);
@@ -261,7 +294,6 @@ class Smart_select_class extends Base_tools_class {
         }
 
         if (hasSelection && maxX > minX && maxY > minY) {
-            // Scale to current layer dimensions
             var scaleX = config.layer.width / config.layer.width_original;
             var scaleY = config.layer.height / config.layer.height_original;
 
@@ -270,7 +302,6 @@ class Smart_select_class extends Base_tools_class {
                 y: config.layer.y + minY * scaleY,
                 width: (maxX - minX) * scaleX,
                 height: (maxY - minY) * scaleY,
-                // Store original coordinates too
                 origMinX: minX,
                 origMinY: minY,
                 origMaxX: maxX,
@@ -279,10 +310,6 @@ class Smart_select_class extends Base_tools_class {
         }
     }
 
-    /**
-     * Extract contour points from the mask for drawing the outline
-     * Uses a simple edge detection approach
-     */
     extractContourPath() {
         if (!this.maskCanvas) return;
 
@@ -292,7 +319,6 @@ class Smart_select_class extends Base_tools_class {
         var height = this.maskCanvas.height;
         var data = imageData.data;
 
-        // Create edge canvas - pixels that are on the edge of the mask
         this.edgeCanvas = document.createElement('canvas');
         this.edgeCanvas.width = width;
         this.edgeCanvas.height = height;
@@ -300,23 +326,18 @@ class Smart_select_class extends Base_tools_class {
         var edgeImageData = edgeCtx.createImageData(width, height);
         var edgeData = edgeImageData.data;
 
-        // Find edge pixels (mask pixels adjacent to non-mask pixels)
         for (var y = 0; y < height; y++) {
             for (var x = 0; x < width; x++) {
                 var i = (y * width + x) * 4;
                 var isMask = data[i] > 128;
 
                 if (isMask) {
-                    // Check if any neighbor is NOT mask (edge pixel)
                     var isEdge = false;
 
-                    // Check 4-connected neighbors
                     if (x > 0 && data[i - 4] <= 128) isEdge = true;
                     if (x < width - 1 && data[i + 4] <= 128) isEdge = true;
                     if (y > 0 && data[i - width * 4] <= 128) isEdge = true;
                     if (y < height - 1 && data[i + width * 4] <= 128) isEdge = true;
-
-                    // Also check boundary
                     if (x == 0 || x == width - 1 || y == 0 || y == height - 1) isEdge = true;
 
                     if (isEdge) {
@@ -332,10 +353,6 @@ class Smart_select_class extends Base_tools_class {
         edgeCtx.putImageData(edgeImageData, 0, 0);
     }
 
-    /**
-     * Render overlay - called by miniPaint's rendering system
-     * Shows the mask with marching ants outline
-     */
     render_overlay(ctx) {
         if (!this.currentMask || !this.maskCanvas) return;
 
@@ -347,41 +364,32 @@ class Smart_select_class extends Base_tools_class {
         inverseCanvas.height = this.maskCanvas.height;
         var inverseCtx = inverseCanvas.getContext('2d');
 
-        // Fill with semi-transparent black
         inverseCtx.fillStyle = 'rgba(0, 0, 0, 0.4)';
         inverseCtx.fillRect(0, 0, inverseCanvas.width, inverseCanvas.height);
 
-        // Cut out the selected area (so selected area is NOT darkened)
         inverseCtx.globalCompositeOperation = 'destination-out';
         inverseCtx.drawImage(this.maskCanvas, 0, 0);
 
-        // Draw the overlay on the main canvas
         ctx.drawImage(
             inverseCanvas,
             config.layer.x, config.layer.y,
             config.layer.width, config.layer.height
         );
 
-        // Draw marching ants border around the actual mask contour
+        // Draw marching ants
         if (this.edgeCanvas) {
-            // Create a canvas for marching ants effect
             var antsCanvas = document.createElement('canvas');
             antsCanvas.width = this.maskCanvas.width;
             antsCanvas.height = this.maskCanvas.height;
             var antsCtx = antsCanvas.getContext('2d');
 
-            // Draw the edge
             antsCtx.drawImage(this.edgeCanvas, 0, 0);
-
-            // Apply marching ants color using composite
             antsCtx.globalCompositeOperation = 'source-in';
 
-            // Alternate color based on animation offset
-            var color = ((Math.floor(this.marchingAntsOffset / 4) % 2) === 0) ? '#00ff00' : '#ffffff';
+            var color = ((Math.floor(this.marchingAntsOffset / 4) % 2) === 0) ? '#ff00ff' : '#ffffff';
             antsCtx.fillStyle = color;
             antsCtx.fillRect(0, 0, antsCanvas.width, antsCanvas.height);
 
-            // Draw the marching ants outline
             ctx.drawImage(
                 antsCanvas,
                 config.layer.x, config.layer.y,
@@ -392,9 +400,6 @@ class Smart_select_class extends Base_tools_class {
         ctx.restore();
     }
 
-    /**
-     * Copy selected area to a new layer
-     */
     copyToLayer() {
         if (!this.currentMask || !this.maskCanvas) {
             alertify.error('No selection to copy');
@@ -407,27 +412,21 @@ class Smart_select_class extends Base_tools_class {
             return;
         }
 
-        // Get the bounds of the selection
         var bounds = this.selectionBounds;
-        if (!bounds || !bounds.origMinX === undefined) {
+        if (!bounds || bounds.origMinX === undefined) {
             alertify.error('Invalid selection bounds');
             return;
         }
 
-        // Create canvas with just the selected pixels
         var canvas = document.createElement('canvas');
         canvas.width = layer.width_original;
         canvas.height = layer.height_original;
         var ctx = canvas.getContext('2d');
 
-        // Draw original image
         ctx.drawImage(layer.link, 0, 0);
-
-        // Apply mask - keep only selected pixels
         ctx.globalCompositeOperation = 'destination-in';
         ctx.drawImage(this.maskCanvas, 0, 0);
 
-        // Crop to selection bounds
         var cropWidth = bounds.origMaxX - bounds.origMinX;
         var cropHeight = bounds.origMaxY - bounds.origMinY;
 
@@ -447,11 +446,9 @@ class Smart_select_class extends Base_tools_class {
             0, 0, cropWidth, cropHeight
         );
 
-        // Calculate position for new layer
         var scaleX = layer.width / layer.width_original;
         var scaleY = layer.height / layer.height_original;
 
-        // Create new layer with the selection - use data as dataURL string
         var params = {
             x: Math.round(layer.x + bounds.origMinX * scaleX),
             y: Math.round(layer.y + bounds.origMinY * scaleY),
@@ -460,7 +457,7 @@ class Smart_select_class extends Base_tools_class {
             width_original: cropWidth,
             height_original: cropHeight,
             type: 'image',
-            name: 'AI Selection Copy',
+            name: 'Magic Wand Selection',
             data: croppedCanvas.toDataURL('image/png')
         };
 
@@ -473,9 +470,6 @@ class Smart_select_class extends Base_tools_class {
         alertify.success('Selection copied to new layer!');
     }
 
-    /**
-     * Cut selected area to a new layer (copy + delete from original)
-     */
     cutToLayer() {
         if (!this.currentMask || !this.maskCanvas) {
             alertify.error('No selection to cut');
@@ -488,27 +482,21 @@ class Smart_select_class extends Base_tools_class {
             return;
         }
 
-        // Get the bounds of the selection
         var bounds = this.selectionBounds;
         if (!bounds || bounds.origMinX === undefined) {
             alertify.error('Invalid selection bounds');
             return;
         }
 
-        // Create canvas with just the selected pixels
         var canvas = document.createElement('canvas');
         canvas.width = layer.width_original;
         canvas.height = layer.height_original;
         var ctx = canvas.getContext('2d');
 
-        // Draw original image
         ctx.drawImage(layer.link, 0, 0);
-
-        // Apply mask - keep only selected pixels
         ctx.globalCompositeOperation = 'destination-in';
         ctx.drawImage(this.maskCanvas, 0, 0);
 
-        // Crop to selection bounds
         var cropWidth = bounds.origMaxX - bounds.origMinX;
         var cropHeight = bounds.origMaxY - bounds.origMinY;
 
@@ -528,11 +516,9 @@ class Smart_select_class extends Base_tools_class {
             0, 0, cropWidth, cropHeight
         );
 
-        // Calculate position for new layer
         var scaleX = layer.width / layer.width_original;
         var scaleY = layer.height / layer.height_original;
 
-        // Create params for new layer
         var params = {
             x: Math.round(layer.x + bounds.origMinX * scaleX),
             y: Math.round(layer.y + bounds.origMinY * scaleY),
@@ -541,24 +527,19 @@ class Smart_select_class extends Base_tools_class {
             width_original: cropWidth,
             height_original: cropHeight,
             type: 'image',
-            name: 'AI Selection Cut',
+            name: 'Magic Wand Cut',
             data: croppedCanvas.toDataURL('image/png')
         };
 
-        // Create canvas with hole where selection was
         var holeCanvas = document.createElement('canvas');
         holeCanvas.width = layer.width_original;
         holeCanvas.height = layer.height_original;
         var holeCtx = holeCanvas.getContext('2d');
 
-        // Draw original image
         holeCtx.drawImage(layer.link, 0, 0);
-
-        // Cut out the mask area
         holeCtx.globalCompositeOperation = 'destination-out';
         holeCtx.drawImage(this.maskCanvas, 0, 0);
 
-        // Execute both actions - update original layer, then insert new layer
         app.State.do_action(
             new app.Actions.Bundle_action('cut_selection_to_layer', 'Cut Selection to Layer', [
                 new app.Actions.Update_layer_image_action(holeCanvas, layer.id),
@@ -566,15 +547,10 @@ class Smart_select_class extends Base_tools_class {
             ])
         );
 
-        // Clear the selection
         this.clearSelection();
-
         alertify.success('Selection cut to new layer!');
     }
 
-    /**
-     * Delete the selected area from the image
-     */
     deleteSelection() {
         if (!this.currentMask || !this.maskCanvas) {
             alertify.error('No selection to delete');
@@ -587,16 +563,12 @@ class Smart_select_class extends Base_tools_class {
             return;
         }
 
-        // Create canvas with hole where selection was
         var holeCanvas = document.createElement('canvas');
         holeCanvas.width = layer.width_original;
         holeCanvas.height = layer.height_original;
         var holeCtx = holeCanvas.getContext('2d');
 
-        // Draw original image
         holeCtx.drawImage(layer.link, 0, 0);
-
-        // Cut out the mask area
         holeCtx.globalCompositeOperation = 'destination-out';
         holeCtx.drawImage(this.maskCanvas, 0, 0);
 
@@ -606,15 +578,10 @@ class Smart_select_class extends Base_tools_class {
             ])
         );
 
-        // Clear the selection
         this.clearSelection();
-
         alertify.success('Selection deleted!');
     }
 
-    /**
-     * Clear the current selection
-     */
     clearSelection() {
         this.currentMask = null;
         this.maskCanvas = null;
@@ -626,9 +593,8 @@ class Smart_select_class extends Base_tools_class {
     }
 
     on_leave() {
-        // Don't clear mask when switching tools - AI inpaint needs it
         return [];
     }
 }
 
-export default Smart_select_class;
+export default Magic_wand_class;
