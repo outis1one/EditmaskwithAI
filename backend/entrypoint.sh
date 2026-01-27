@@ -61,20 +61,6 @@ else
     fi
 fi
 
-# Check if eye catalog needs to be populated
-echo ""
-echo "Checking eye catalog..."
-echo "------------------------------------------"
-PATCHES_COUNT=$(find /app/data/patches -maxdepth 1 -type d 2>/dev/null | wc -l)
-DB_PATCHES_COUNT=$(sqlite3 /app/data/ai_photo_edit.db "SELECT COUNT(*) FROM patches;" 2>/dev/null || echo "0")
-
-if [ "$DB_PATCHES_COUNT" = "0" ] || [ "$PATCHES_COUNT" -le 1 ]; then
-    echo "Eye catalog is empty. Downloading sample eyes..."
-    cd /app && python /scripts/download_sample_eyes.py || echo "Warning: Could not download sample eyes (non-fatal)"
-else
-    echo "✓ Eye catalog has $DB_PATCHES_COUNT patches"
-fi
-
 echo ""
 echo "=========================================="
 echo "Starting FastAPI server..."
