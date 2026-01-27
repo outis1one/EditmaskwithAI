@@ -72,6 +72,30 @@ class ApiService {
     }
 
     /**
+     * Remove background from image using AI (rembg)
+     * @param {string} imageData - Base64 encoded image data
+     * @returns {Promise<{result: string, width: number, height: number}>} - Base64 encoded result with transparency
+     */
+    async removeBackground(imageData) {
+        const response = await fetch(`${this.baseUrl}/tools/remove-background-base64`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                image: imageData,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+            throw new Error(error.detail || `Remove background request failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
      * Health check for the backend
      * @returns {Promise<boolean>}
      */

@@ -283,6 +283,14 @@ const menuDefinition = [
 				name: 'Histogram',
 				ellipsis: true,
 				target: 'image/histogram.histogram'
+			},
+			{
+				divider: true
+			},
+			{
+				name: 'Remove Background (AI)',
+				ellipsis: true,
+				target: 'image/remove_background.remove_background'
 			}
 		]
 	},
