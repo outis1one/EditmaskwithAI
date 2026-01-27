@@ -38,7 +38,8 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download rembg model (u2net) to avoid first-run delay
-RUN python -c "from rembg import remove; print('rembg model downloaded')" || true
+# Note: This downloads the U2-Net model (~170MB) during build
+RUN python -c "from rembg import remove; print('rembg model downloaded')"
 
 # Copy backend application
 COPY backend/ .
