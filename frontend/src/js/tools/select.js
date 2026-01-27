@@ -5,6 +5,7 @@ import Base_layers_class from './../core/base-layers.js';
 import Base_selection_class from './../core/base-selection.js';
 import Helper_class from './../libs/helpers.js';
 import Dialog_class from './../libs/popup.js';
+import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
 
 class Select_tool_class extends Base_tools_class {
 
@@ -35,6 +36,132 @@ class Select_tool_class extends Base_tools_class {
 			},
 		};
 		this.Base_selection = new Base_selection_class(ctx, sel_config, this.name);
+	}
+
+	/**
+	 * Called when the Select tool is activated
+	 * If there's an AI selection, offer to float it so it can be moved
+	 */
+	on_activate() {
+		var _this = this;
+
+		// Check if there's an active AI selection (Smart Select, Brush Select, etc.)
+		if (window.smartSelectMask && window.smartSelectMask.canvas) {
+			// Ask user if they want to float the selection
+			alertify.confirm(
+				'Float Selection',
+				'You have an active selection. Would you like to copy it to a new layer so you can move and scale it?',
+				function() {
+					// Yes - float the selection
+					_this.floatSelection();
+				},
+				function() {
+					// No - just clear the selection indicator
+					alertify.message('Tip: Use Ctrl+C in selection tools to copy, or Ctrl+X to cut.');
+				}
+			).set('labels', {ok: 'Yes, Float It', cancel: 'No, Keep Selection'});
+		}
+	}
+
+	/**
+	 * Float the current selection to a new layer
+	 * This copies the selected pixels to a new layer that can be moved/scaled
+	 */
+	floatSelection() {
+		var maskCanvas = window.smartSelectMask?.canvas;
+		if (!maskCanvas) {
+			alertify.error('No selection to float');
+			return;
+		}
+
+		var layer = config.layer;
+		if (layer.type != 'image') {
+			alertify.error('Please select an image layer first');
+			return;
+		}
+
+		// Get mask bounds
+		var maskCtx = maskCanvas.getContext('2d');
+		var imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+		var minX = maskCanvas.width, minY = maskCanvas.height;
+		var maxX = 0, maxY = 0;
+		var hasSelection = false;
+
+		for (var y = 0; y < maskCanvas.height; y++) {
+			for (var x = 0; x < maskCanvas.width; x++) {
+				var i = (y * maskCanvas.width + x) * 4;
+				if (imageData.data[i] > 128) {
+					hasSelection = true;
+					minX = Math.min(minX, x);
+					minY = Math.min(minY, y);
+					maxX = Math.max(maxX, x);
+					maxY = Math.max(maxY, y);
+				}
+			}
+		}
+
+		if (!hasSelection || maxX <= minX || maxY <= minY) {
+			alertify.error('Selection is empty or too small');
+			return;
+		}
+
+		// Create masked image
+		var maskedCanvas = document.createElement('canvas');
+		maskedCanvas.width = layer.width_original;
+		maskedCanvas.height = layer.height_original;
+		var maskedCtx = maskedCanvas.getContext('2d');
+
+		maskedCtx.drawImage(layer.link, 0, 0);
+		maskedCtx.globalCompositeOperation = 'destination-in';
+		maskedCtx.drawImage(maskCanvas, 0, 0);
+
+		// Crop to selection bounds
+		var cropWidth = maxX - minX + 1;
+		var cropHeight = maxY - minY + 1;
+
+		var croppedCanvas = document.createElement('canvas');
+		croppedCanvas.width = cropWidth;
+		croppedCanvas.height = cropHeight;
+		var croppedCtx = croppedCanvas.getContext('2d');
+
+		croppedCtx.drawImage(
+			maskedCanvas,
+			minX, minY, cropWidth, cropHeight,
+			0, 0, cropWidth, cropHeight
+		);
+
+		// Calculate position
+		var scaleX = layer.width / layer.width_original;
+		var scaleY = layer.height / layer.height_original;
+
+		var params = {
+			x: Math.round(layer.x + minX * scaleX),
+			y: Math.round(layer.y + minY * scaleY),
+			width: Math.round(cropWidth * scaleX),
+			height: Math.round(cropHeight * scaleY),
+			width_original: cropWidth,
+			height_original: cropHeight,
+			type: 'image',
+			name: layer.name + ' (Floated)',
+			data: croppedCanvas.toDataURL('image/png')
+		};
+
+		app.State.do_action(
+			new app.Actions.Bundle_action('float_selection', 'Float Selection', [
+				new app.Actions.Insert_layer_action(params)
+			])
+		);
+
+		// Clear the selection
+		window.smartSelectMask = null;
+
+		// Enable transparency
+		if (config.TRANSPARENCY == false) {
+			config.TRANSPARENCY = true;
+			this.Base_layers.render();
+		}
+
+		alertify.success('Selection floated to new layer! You can now move and scale it.');
 	}
 
 	load() {

@@ -191,7 +191,8 @@ class Smart_select_class extends Base_tools_class {
             newMaskCanvas.width = config.layer.width_original;
             newMaskCanvas.height = config.layer.height_original;
             var newMaskCtx = newMaskCanvas.getContext('2d');
-            newMaskCtx.drawImage(maskImage, 0, 0);
+            // Scale mask to match layer dimensions
+            newMaskCtx.drawImage(maskImage, 0, 0, newMaskCanvas.width, newMaskCanvas.height);
 
             // If additive and we have an existing mask, combine them
             if (isAdditive && _this.maskCanvas) {
