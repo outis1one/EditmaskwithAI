@@ -86,6 +86,44 @@ const menuDefinition = [
 				name: 'Quick Load',
 				shortcut: 'F10',
 				target: 'file/quickload.quickload'
+			},
+			{
+				divider: true
+			},
+			{
+				name: 'My Library',
+				children: [
+					{
+						name: 'Browse Library',
+						ellipsis: true,
+						target: 'file/my_library.browse_library'
+					},
+					{
+						divider: true
+					},
+					{
+						name: 'Save Layer to Library',
+						ellipsis: true,
+						target: 'file/my_library.save_to_library'
+					},
+					{
+						name: 'Save Selection to Library',
+						ellipsis: true,
+						target: 'file/my_library.save_selection_to_library'
+					},
+					{
+						divider: true
+					},
+					{
+						name: 'Export Library (Backup)',
+						target: 'file/my_library.export_library'
+					},
+					{
+						name: 'Import Library',
+						ellipsis: true,
+						target: 'file/my_library.import_library'
+					}
+				]
 			}
 		]
 	},
