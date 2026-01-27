@@ -19,6 +19,7 @@ opencv-python-headless==4.9.0.80
 onnxruntime>=1.17.0
 rembg>=2.0.70
 # SAM (Segment Anything) for smart object selection - runs locally, no API needed
-torch==2.1.2
-torchvision==0.16.2
+# Using torch 2.4+ for numpy 2.x compatibility (required by scikit-image 0.26+)
+torch>=2.4.0
+torchvision>=0.19.0
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
