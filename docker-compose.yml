@@ -17,6 +17,10 @@ services:
       - STABILITY_API_KEY=${STABILITY_API_KEY:-}
       - REPLICATE_API_KEY=${REPLICATE_API_KEY:-}
       - CORS_ORIGINS=*
+    # DNS servers for reliable external API access (Replicate, etc.)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     restart: unless-stopped
 
 volumes:

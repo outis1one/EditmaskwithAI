@@ -1,6 +1,6 @@
 /**
  * AI Inpaint Tool - Edit selected regions using AI with text prompts
- * Works with Smart Select tool's mask or manual selection
+ * Works with any selection tool: Smart Select, Magic Wand, Lasso, Ellipse Select, or Selection
  */
 
 import app from './../app.js';
@@ -38,12 +38,13 @@ class Ai_inpaint_class extends Base_tools_class {
     showInpaintDialog() {
         var _this = this;
 
-        // Check if we have a selection
-        var hasMask = window.smartSelectMask != null;
+        // Check if we have a selection from any selection tool
+        // All selection tools (Smart Select, Magic Wand, Lasso, Ellipse Select) store their mask in window.smartSelectMask
+        var hasMask = window.smartSelectMask != null && window.smartSelectMask.canvas != null;
         var hasRectSelection = this.getRectSelection() != null;
 
         if (!hasMask && !hasRectSelection) {
-            alertify.warning('No selection found. Use Smart Select or Selection tool first.');
+            alertify.warning('No selection found. Use Smart Select, Magic Wand, Lasso, Ellipse Select, or Selection tool first.');
             return;
         }
 
