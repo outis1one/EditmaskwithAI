@@ -14,8 +14,9 @@ pydantic-settings==2.1.0
 email-validator==2.1.0
 opencv-python-headless==4.9.0.80
 scikit-image==0.22.0
+# rembg for background removal - use onnxruntime 1.15.1 to avoid executable stack issue
+onnxruntime==1.15.1
 rembg==2.0.50
-onnxruntime==1.16.3
 # SAM (Segment Anything) for smart object selection - runs locally, no API needed
 torch==2.1.2
 torchvision==0.16.2

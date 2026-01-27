@@ -86,6 +86,44 @@ const menuDefinition = [
 				name: 'Quick Load',
 				shortcut: 'F10',
 				target: 'file/quickload.quickload'
+			},
+			{
+				divider: true
+			},
+			{
+				name: 'My Library',
+				children: [
+					{
+						name: 'Browse Library',
+						ellipsis: true,
+						target: 'file/my_library.browse_library'
+					},
+					{
+						divider: true
+					},
+					{
+						name: 'Save Layer to Library',
+						ellipsis: true,
+						target: 'file/my_library.save_to_library'
+					},
+					{
+						name: 'Save Selection to Library',
+						ellipsis: true,
+						target: 'file/my_library.save_selection_to_library'
+					},
+					{
+						divider: true
+					},
+					{
+						name: 'Export Library (Backup)',
+						target: 'file/my_library.export_library'
+					},
+					{
+						name: 'Import Library',
+						ellipsis: true,
+						target: 'file/my_library.import_library'
+					}
+				]
 			}
 		]
 	},
@@ -291,6 +329,29 @@ const menuDefinition = [
 				name: 'Remove Background (AI)',
 				ellipsis: true,
 				target: 'image/remove_background.remove_background'
+			},
+			{
+				divider: true
+			},
+			{
+				name: 'Selection Effects',
+				children: [
+					{
+						name: 'Invert Selection',
+						ellipsis: true,
+						target: 'image/selection_effects.invert_selection'
+					},
+					{
+						name: 'Adjust Selection',
+						ellipsis: true,
+						target: 'image/selection_effects.adjust_selection'
+					},
+					{
+						name: 'Greyscale Selection',
+						ellipsis: true,
+						target: 'image/selection_effects.greyscale_selection'
+					}
+				]
 			}
 		]
 	},
@@ -325,6 +386,11 @@ const menuDefinition = [
 			{
 				name: 'Convert to Raster',
 				target: 'layer/raster.raster'
+			},
+			{
+				name: 'Scale Layer',
+				ellipsis: true,
+				target: 'layer/scale.scale'
 			},
 			{
 				divider: true
@@ -479,6 +545,11 @@ const menuDefinition = [
 				name: 'Black and White',
 				ellipsis: true,
 				target: 'effects/black_and_white.black_and_white'
+			},
+			{
+				name: 'Greyscale',
+				ellipsis: true,
+				target: 'effects/greyscale.greyscale'
 			},
 			{
 				name: 'Borders',
