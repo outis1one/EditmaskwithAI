@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for OpenCV, rembg, SAM, and image processing
+# Install system dependencies for OpenCV, SAM, and image processing
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -19,9 +19,6 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Pre-download rembg model (u2net) to avoid first-run delay
-RUN python -c "from rembg import remove; print('rembg model downloaded')" || true
 
 # Copy application
 COPY . .
