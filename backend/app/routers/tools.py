@@ -131,12 +131,13 @@ async def inpaint_base64(request: InpaintRequest):
 @router.post("/remove-background-base64")
 async def remove_background_base64(request: RemoveBackgroundRequest):
     """
-    Remove background from a base64 encoded image using rembg.
+    Remove background from a base64 encoded image using rembg with BiRefNet.
+    BiRefNet is state-of-the-art for background removal (better than u2net).
     Returns base64 encoded PNG with transparent background.
     Used by miniPaint frontend.
     """
     try:
-        from rembg import remove
+        from rembg import remove, new_session
     except ImportError:
         raise HTTPException(
             status_code=500,
@@ -147,8 +148,14 @@ async def remove_background_base64(request: RemoveBackgroundRequest):
         # Decode base64 image
         image_bytes = base64.b64decode(request.image)
 
-        # Remove background
-        result_bytes = remove(image_bytes)
+        # Use BiRefNet model for best quality (state-of-the-art)
+        # Falls back to default model if BiRefNet not available
+        try:
+            session = new_session("birefnet-general")
+            result_bytes = remove(image_bytes, session=session)
+        except Exception:
+            # Fallback to default model
+            result_bytes = remove(image_bytes)
 
         # Convert result to base64
         result_b64 = base64.b64encode(result_bytes).decode('utf-8')
@@ -175,7 +182,7 @@ async def remove_background(
     db: Session = Depends(get_db)
 ):
     """
-    Remove background from an image using rembg.
+    Remove background from an image using rembg with BiRefNet model.
 
     Either provide project_id to use current project image,
     or upload a file directly.
@@ -183,7 +190,7 @@ async def remove_background(
     Returns PNG with transparent background.
     """
     try:
-        from rembg import remove
+        from rembg import remove, new_session
     except ImportError:
         raise HTTPException(
             status_code=500,
@@ -210,8 +217,12 @@ async def remove_background(
             detail="Provide either project_id or file"
         )
 
-    # Remove background
-    result_bytes = remove(image_bytes)
+    # Remove background using BiRefNet (state-of-the-art)
+    try:
+        session = new_session("birefnet-general")
+        result_bytes = remove(image_bytes, session=session)
+    except Exception:
+        result_bytes = remove(image_bytes)
 
     return Response(
         content=result_bytes,
@@ -226,11 +237,11 @@ async def remove_background_to_layer(
     db: Session = Depends(get_db)
 ):
     """
-    Remove background and save as a new layer in the project.
+    Remove background using BiRefNet and save as a new layer in the project.
     Returns layer info that can be added to frontend layer system.
     """
     try:
-        from rembg import remove
+        from rembg import remove, new_session
     except ImportError:
         raise HTTPException(
             status_code=500,
@@ -250,8 +261,12 @@ async def remove_background_to_layer(
     with open(image_path, 'rb') as f:
         image_bytes = f.read()
 
-    # Remove background
-    result_bytes = remove(image_bytes)
+    # Remove background using BiRefNet (state-of-the-art)
+    try:
+        session = new_session("birefnet-general")
+        result_bytes = remove(image_bytes, session=session)
+    except Exception:
+        result_bytes = remove(image_bytes)
 
     # Save as layer file
     project_dir = edit_service.get_project_dir(project_id)

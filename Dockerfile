@@ -22,7 +22,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies for OpenCV, rembg, SAM, and image processing
-# execstack is needed to fix onnxruntime executable stack issue in containers
+# Note: onnxruntime 1.17+ fixed executable stack issues, no longer need execstack
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -39,9 +39,8 @@ RUN apt-get update && apt-get install -y \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Try to pre-download rembg model, but don't fail build if onnxruntime has issues
-# (onnxruntime can have executable stack issues in some Docker environments)
-# If this fails, Remove Background feature will be disabled
+# Verify rembg loads correctly (model downloads on first use)
+# rembg now supports BiRefNet models which are state-of-the-art for background removal
 RUN python -c "from rembg import remove; print('rembg ready')" || echo "WARNING: rembg not available - Remove Background will be disabled"
 
 # Copy backend application
