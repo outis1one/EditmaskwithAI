@@ -11,17 +11,22 @@ import Layer_rename_class from './../../modules/layer/rename.js';
 import Effects_browser_class from './../../modules/effects/browser.js';
 import Layer_duplicate_class from './../../modules/layer/duplicate.js';
 import Layer_raster_class from './../../modules/layer/raster.js';
+import Layer_scale_class from './../../modules/layer/scale.js';
+import Layer_merge_class from './../../modules/layer/merge.js';
+import Layer_flatten_class from './../../modules/layer/flatten.js';
 import Tools_translate_class from './../../modules/tools/translate.js';
 
 var template = `
 	<button type="button" class="layer_add trn" id="insert_layer" title="Insert new layer">+</button>
 	<button type="button" class="layer_duplicate trn" id="layer_duplicate" title="Duplicate layer">D</button>
 	<button type="button" class="layer_raster trn" id="layer_raster" title="Convert layer to raster">R</button>
+	<button type="button" class="layer_scale trn" id="layer_scale" title="Scale layer">S</button>
 
 	<button type="button" class="layers_arrow trn" title="Move layer down" id="layer_down">&darr;</button>
 	<button type="button" class="layers_arrow trn" title="Move layer up" id="layer_up">&uarr;</button>
 
 	<div class="layers_list" id="layers"></div>
+	<div class="layer_context_menu" id="layer_context_menu"></div>
 `;
 
 /**
@@ -36,7 +41,11 @@ class GUI_layers_class {
 		this.Effects_browser = new Effects_browser_class();
 		this.Layer_duplicate = new Layer_duplicate_class();
 		this.Layer_raster = new Layer_raster_class();
+		this.Layer_scale = new Layer_scale_class();
+		this.Layer_merge = new Layer_merge_class();
+		this.Layer_flatten = new Layer_flatten_class();
 		this.Tools_translate = new Tools_translate_class();
+		this.contextMenuLayerId = null;
 	}
 
 	render_main_layers() {
@@ -66,6 +75,10 @@ class GUI_layers_class {
 			else if (target.id == 'layer_raster') {
 				//raster
 				_this.Layer_raster.raster();
+			}
+			else if (target.id == 'layer_scale') {
+				//scale
+				_this.Layer_scale.scale();
 			}
 			else if (target.id == 'layer_up') {
 				//move layer up
@@ -127,6 +140,134 @@ class GUI_layers_class {
 			}
 		});
 
+		// Right-click context menu for layers
+		document.getElementById('layers_base').addEventListener('contextmenu', function (event) {
+			var target = event.target;
+
+			// Check if right-clicked on a layer item
+			if (target.id == 'layer_name' || target.closest('.item')) {
+				event.preventDefault();
+
+				var layerId = target.dataset.id || target.closest('.item').querySelector('[data-id]').dataset.id;
+				_this.showContextMenu(event.clientX, event.clientY, layerId);
+			}
+		});
+
+		// Hide context menu when clicking elsewhere
+		document.addEventListener('click', function (event) {
+			_this.hideContextMenu();
+		});
+
+	}
+
+	/**
+	 * Show context menu for layer
+	 */
+	showContextMenu(x, y, layerId) {
+		var _this = this;
+		this.contextMenuLayerId = layerId;
+
+		// Select the layer first
+		if (layerId != config.layer.id) {
+			app.State.do_action(
+				new app.Actions.Select_layer_action(layerId)
+			);
+		}
+
+		var menuItems = [
+			{ label: 'Rename', action: 'rename' },
+			{ label: 'Duplicate', action: 'duplicate' },
+			{ label: 'Delete', action: 'delete' },
+			{ label: '---' },
+			{ label: 'Move Up', action: 'move_up' },
+			{ label: 'Move Down', action: 'move_down' },
+			{ label: '---' },
+			{ label: 'Scale Layer...', action: 'scale' },
+			{ label: 'Convert to Raster', action: 'raster' },
+			{ label: '---' },
+			{ label: 'Merge Down', action: 'merge' },
+			{ label: 'Flatten All', action: 'flatten' },
+		];
+
+		var menu = document.getElementById('layer_context_menu');
+		var html = '<ul class="context-menu-list">';
+
+		for (var i = 0; i < menuItems.length; i++) {
+			var item = menuItems[i];
+			if (item.label === '---') {
+				html += '<li class="separator"></li>';
+			} else {
+				html += '<li data-action="' + item.action + '">' + item.label + '</li>';
+			}
+		}
+
+		html += '</ul>';
+		menu.innerHTML = html;
+		menu.style.display = 'block';
+		menu.style.left = x + 'px';
+		menu.style.top = y + 'px';
+
+		// Add click handlers to menu items
+		menu.querySelectorAll('li[data-action]').forEach(function(item) {
+			item.addEventListener('click', function(e) {
+				e.stopPropagation();
+				_this.handleContextMenuAction(this.dataset.action);
+				_this.hideContextMenu();
+			});
+		});
+	}
+
+	/**
+	 * Hide context menu
+	 */
+	hideContextMenu() {
+		var menu = document.getElementById('layer_context_menu');
+		if (menu) {
+			menu.style.display = 'none';
+		}
+	}
+
+	/**
+	 * Handle context menu action
+	 */
+	handleContextMenuAction(action) {
+		var layerId = this.contextMenuLayerId;
+
+		switch (action) {
+			case 'rename':
+				this.Layer_rename.rename(layerId);
+				break;
+			case 'duplicate':
+				this.Layer_duplicate.duplicate();
+				break;
+			case 'delete':
+				app.State.do_action(
+					new app.Actions.Delete_layer_action(layerId)
+				);
+				break;
+			case 'move_up':
+				app.State.do_action(
+					new app.Actions.Reorder_layer_action(layerId, 1)
+				);
+				break;
+			case 'move_down':
+				app.State.do_action(
+					new app.Actions.Reorder_layer_action(layerId, -1)
+				);
+				break;
+			case 'scale':
+				this.Layer_scale.scale();
+				break;
+			case 'raster':
+				this.Layer_raster.raster();
+				break;
+			case 'merge':
+				this.Layer_merge.merge();
+				break;
+			case 'flatten':
+				this.Layer_flatten.flatten();
+				break;
+		}
 	}
 
 	/**

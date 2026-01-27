@@ -327,6 +327,11 @@ const menuDefinition = [
 				target: 'layer/raster.raster'
 			},
 			{
+				name: 'Scale Layer',
+				ellipsis: true,
+				target: 'layer/scale.scale'
+			},
+			{
 				divider: true
 			},
 			{
@@ -479,6 +484,11 @@ const menuDefinition = [
 				name: 'Black and White',
 				ellipsis: true,
 				target: 'effects/black_and_white.black_and_white'
+			},
+			{
+				name: 'Greyscale',
+				ellipsis: true,
+				target: 'effects/greyscale.greyscale'
 			},
 			{
 				name: 'Borders',

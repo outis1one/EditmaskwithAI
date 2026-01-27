@@ -518,6 +518,51 @@ IMPORTANT: any new icon should also must be added on /service-worker.js + its ve
 	bottom:0;
 	width: 20px;
 }
+/* Layer context menu */
+.layer_context_menu{
+	display: none;
+	position: fixed;
+	z-index: 1000;
+	background: var(--section-background-color);
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+	min-width: 150px;
+}
+.layer_context_menu ul{
+	list-style: none;
+	margin: 0;
+	padding: 5px 0;
+}
+.layer_context_menu li{
+	padding: 6px 15px;
+	cursor: pointer;
+	color: var(--text-color);
+	font-size: 13px;
+}
+.layer_context_menu li:hover{
+	background: var(--background-color-active);
+	color: var(--text-color-active);
+}
+.layer_context_menu li.separator{
+	height: 1px;
+	background: var(--border-color);
+	margin: 5px 10px;
+	padding: 0;
+	cursor: default;
+}
+.layer_context_menu li.separator:hover{
+	background: var(--border-color);
+}
+.layer_scale{
+	display:inline-block;
+	padding:1px 8px;
+	margin-right: 5px;
+	border:1px solid #444;
+	border-color: var(--border-color);
+	color: var(--text-color);
+	cursor:pointer;
+}
 .sidebar_right .label{
 	display: inline-block;
 }
