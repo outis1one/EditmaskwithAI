@@ -764,6 +764,7 @@ class Brush_select_class extends Base_tools_class {
 
     on_leave() {
         this.isDrawing = false;
+        this.isProcessing = false;  // Reset processing state when leaving tool
         this.brushPath = [];
         return [];
     }
