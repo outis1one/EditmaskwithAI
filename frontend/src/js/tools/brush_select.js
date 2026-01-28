@@ -262,7 +262,8 @@ class Brush_select_class extends Base_tools_class {
             if (isAdditive && this.currentMask) {
                 alertify.success('Added to selection! Shift+brush to add more.');
             } else {
-                alertify.success('Selection complete! Ctrl+C to copy, Ctrl+X to cut.');
+                // Offer to float the selection for immediate manipulation (Canva-like)
+                this.offerFloatSelection();
             }
 
         } catch (error) {
@@ -287,7 +288,8 @@ class Brush_select_class extends Base_tools_class {
             var maskCanvas = await this.decodeMask(result.mask);
             this.applyMaskCanvas(maskCanvas, false);
 
-            alertify.success('Selection complete! Brush over more to add.');
+            // Offer to float the selection for immediate manipulation
+            this.offerFloatSelection();
 
         } catch (error) {
             console.error('Select error:', error);
@@ -295,6 +297,34 @@ class Brush_select_class extends Base_tools_class {
         } finally {
             this.isProcessing = false;
         }
+    }
+
+    /**
+     * Offer to float the selection to a new layer for manipulation (Canva-like workflow)
+     */
+    offerFloatSelection() {
+        var _this = this;
+
+        alertify.confirm(
+            'Selection Complete',
+            'Would you like to move/scale this selection? This will copy it to a new layer.',
+            function() {
+                // Yes - copy to layer and switch to Select tool
+                _this.copyToLayer();
+
+                // Switch to Select tool
+                setTimeout(function() {
+                    var selectTool = document.querySelector('.sidebar_left .item[data-tool="select"]');
+                    if (selectTool) {
+                        selectTool.click();
+                    }
+                }, 100);
+            },
+            function() {
+                // No - just keep the selection
+                alertify.message('Tip: Use Ctrl+C to copy or Ctrl+X to cut the selection.');
+            }
+        ).set('labels', {ok: 'Yes, Move/Scale', cancel: 'Keep Selection'});
     }
 
     /**
