@@ -18,8 +18,8 @@ torch==2.1.2
 torchvision==0.16.2
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
 
-# ONNX Runtime for U2Net background removal (works with numpy<2.0)
-onnxruntime==1.16.3
+# Note: Using OpenCV DNN instead of onnxruntime for U2Net
+# (onnxruntime has executable stack issues in some Docker environments)
 
 # NOTE: rembg (background removal) disabled due to dependency conflicts
 # rembg>=2.0.70 requires:

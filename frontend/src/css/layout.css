@@ -867,6 +867,63 @@ canvas{
 	background-color: #ffc107;
 	color: #000;
 }
+
+/* Alertify dialog styling - fix text color issues */
+.alertify .ajs-dialog {
+	background-color: #3a3f44;
+	color: #f4f3f3;
+	border-radius: 6px;
+	box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.alertify .ajs-header {
+	background-color: #4a5058;
+	color: #f4f3f3;
+	border-bottom: 1px solid #555;
+	padding: 10px 15px;
+	font-weight: bold;
+}
+.alertify .ajs-body {
+	color: #f4f3f3;
+	padding: 15px;
+}
+.alertify .ajs-body .ajs-content {
+	color: #f4f3f3;
+}
+.alertify .ajs-footer {
+	background-color: #3a3f44;
+	border-top: 1px solid #555;
+	padding: 10px 15px;
+}
+.alertify .ajs-footer .ajs-buttons .ajs-button {
+	background-color: #4a5058;
+	color: #f4f3f3;
+	border: 1px solid #666;
+	border-radius: 4px;
+	padding: 6px 16px;
+	margin: 0 4px;
+	cursor: pointer;
+}
+.alertify .ajs-footer .ajs-buttons .ajs-button:hover {
+	background-color: #5a6068;
+}
+.alertify .ajs-footer .ajs-buttons .ajs-button.ajs-ok {
+	background-color: #28a745;
+	border-color: #28a745;
+}
+.alertify .ajs-footer .ajs-buttons .ajs-button.ajs-ok:hover {
+	background-color: #218838;
+}
+.alertify .ajs-input {
+	background-color: #2a2f34;
+	color: #f4f3f3;
+	border: 1px solid #555;
+	padding: 8px;
+	border-radius: 4px;
+	width: 100%;
+}
+.alertify .ajs-input::placeholder {
+	color: #999;
+}
 .effectsPreview{
 	cursor: pointer;
 	background-color: #ddd;
