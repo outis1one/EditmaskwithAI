@@ -204,27 +204,30 @@ _u2net_model = None
 
 
 async def _download_u2net_model(models_dir):
-    """Auto-download U2Net model (lightweight version ~4MB)"""
+    """Auto-download full U2Net model (~176MB) for best quality background removal"""
     import urllib.request
     from pathlib import Path
 
     models_dir = Path(models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download lightweight u2netp model (only 4MB)
-    url = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
-    dest_path = models_dir / "u2netp.onnx"
+    # Download full U2Net model (176MB) for best quality
+    url = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+    dest_path = models_dir / "u2net.onnx"
 
-    print(f"Downloading U2Net model from {url}...")
+    print(f"Downloading full U2Net model from {url} (~176MB)...")
+    print("This may take a few minutes...")
 
     def download_progress(count, block_size, total_size):
         if total_size > 0:
             percent = min(100, count * block_size * 100 // total_size)
-            if count % 100 == 0:
-                print(f"  Download progress: {percent}%")
+            downloaded_mb = (count * block_size) / (1024 * 1024)
+            total_mb = total_size / (1024 * 1024)
+            if count % 500 == 0:
+                print(f"  Download progress: {percent}% ({downloaded_mb:.1f}/{total_mb:.1f} MB)")
 
     urllib.request.urlretrieve(url, str(dest_path), download_progress)
-    print(f"U2Net model downloaded to {dest_path}")
+    print(f"Full U2Net model downloaded to {dest_path}")
 
     return dest_path
 
