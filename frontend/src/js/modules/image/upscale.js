@@ -1,9 +1,13 @@
 /**
  * Upscale — increase image resolution.
+ * Fetches available methods from /api/print/upscale/available on first open.
+ * Auto-selects the recommended method; user can override.
  *
- * Lanczos: always available, fast, good for clean/sharp images.
- * AI (Real-ESRGAN): much better for photos — restores texture, sharpness.
- *   Requires `realesrgan-ncnn-vulkan` or `basicsr` + `realesrgan` Python packages.
+ * Methods (in priority order, server picks best):
+ *   auto               — server picks best available
+ *   realesrgan_pytorch — Real-ESRGAN via PyTorch (CUDA > MPS > CPU)
+ *   realesrgan_ncnn    — Real-ESRGAN NCNN Vulkan binary (any GPU)
+ *   lanczos            — always available, instant
  *
  * Menu target: image/upscale.upscale
  */
@@ -16,6 +20,14 @@ import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.j
 
 var instance = null;
 
+// Method display labels
+const METHOD_LABELS = {
+    auto:                'Auto (best available)',
+    realesrgan_pytorch:  'Real-ESRGAN — PyTorch',
+    realesrgan_ncnn:     'Real-ESRGAN — NCNN Vulkan',
+    lanczos:             'Lanczos (fast, no AI)',
+};
+
 class Image_upscale_class {
 
     constructor() {
@@ -24,7 +36,7 @@ class Image_upscale_class {
         this.Base_layers = new Base_layers_class();
         this.Dialog = new Dialog_class();
         this.isProcessing = false;
-        this._aiAvailable = null;
+        this._caps = null;
     }
 
     async upscale() {
@@ -33,24 +45,41 @@ class Image_upscale_class {
             return;
         }
 
+        var caps = await this._fetchCaps();
         var W = config.layer.width_original;
         var H = config.layer.height_original;
 
-        // Check AI availability once, cache it
-        if (this._aiAvailable === null) {
-            try {
-                var base = window.API_BASE_URL || '';
-                var r = await fetch(`${base}/api/print/upscale/available`);
-                var data = r.ok ? await r.json() : {};
-                this._aiAvailable = data.realesrgan || false;
-            } catch {
-                this._aiAvailable = false;
-            }
-        }
+        // Build method selector — only show what's available + auto
+        var available = ['auto', ...caps.methods];
+        var methodValues = [...new Set(available)]; // dedupe
 
-        var aiNote = this._aiAvailable
-            ? 'Real-ESRGAN AI upscaling available.'
-            : 'AI upscaling not installed (Real-ESRGAN). Using Lanczos only.';
+        // Label each option, mark recommended
+        var methodLabels = methodValues.map(m => {
+            var label = METHOD_LABELS[m] || m;
+            if (m === 'auto') {
+                label = `Auto → ${caps.recommended_label}`;
+            } else if (m === caps.recommended && m !== 'auto') {
+                label += ' ★';
+            }
+            return label;
+        });
+
+        // Annotate with device info
+        var deviceNote = '';
+        if (caps.realesrgan_pytorch) {
+            var dev = caps.realesrgan_pytorch_device;
+            var devLabel = dev === 'cuda' ? 'CUDA GPU'
+                         : dev === 'mps'  ? 'Apple Silicon'
+                         : 'CPU (slow — ~1–3 min for large images)';
+            deviceNote += `PyTorch: ${devLabel}. `;
+        }
+        if (caps.realesrgan_ncnn) {
+            deviceNote += 'NCNN Vulkan binary found. ';
+        }
+        if (!caps.realesrgan_pytorch && !caps.realesrgan_ncnn) {
+            deviceNote = 'No AI upscaler detected — Lanczos only. ' +
+                'Install Real-ESRGAN for AI quality (see docs).';
+        }
 
         var _this = this;
 
@@ -60,7 +89,8 @@ class Image_upscale_class {
                 {
                     title: '',
                     html: `<div style="font-size:11px;color:#888;margin:0 0 8px;">
-                        Current size: ${W}×${H}px<br>${aiNote}
+                        Current: ${W}×${H}px<br>
+                        ${deviceNote}
                     </div>`,
                 },
                 {
@@ -73,8 +103,8 @@ class Image_upscale_class {
                 {
                     name: 'method',
                     title: 'Method:',
-                    value: this._aiAvailable ? 'ai' : 'lanczos',
-                    values: this._aiAvailable ? ['lanczos', 'ai'] : ['lanczos'],
+                    value: methodLabels[0],   // auto
+                    values: methodLabels,
                     type: 'select',
                 },
                 {
@@ -84,21 +114,49 @@ class Image_upscale_class {
                 },
             ],
             on_finish: async function (params) {
+                // Map label back to method key
+                var labelIdx = methodLabels.indexOf(params.method);
+                var methodKey = labelIdx >= 0 ? methodValues[labelIdx] : 'auto';
                 var scale = parseFloat(params.scale);
-                var newW = Math.round(W * scale);
-                var newH = Math.round(H * scale);
-                await _this._run(scale, params.method, params.new_layer, newW, newH);
+                await _this._run(scale, methodKey, params.new_layer);
             },
         });
     }
 
-    async _run(scale, method, newLayer, newW, newH) {
+    async _fetchCaps() {
+        if (this._caps) return this._caps;
+        try {
+            var base = window.API_BASE_URL || '';
+            var r = await fetch(`${base}/api/print/upscale/available`);
+            if (r.ok) {
+                this._caps = await r.json();
+            }
+        } catch { /* ignore */ }
+
+        // Safe default if fetch failed
+        if (!this._caps) {
+            this._caps = {
+                lanczos: true,
+                realesrgan_pytorch: false,
+                realesrgan_ncnn: false,
+                recommended: 'lanczos',
+                recommended_label: 'Lanczos',
+                methods: ['lanczos'],
+            };
+        }
+        return this._caps;
+    }
+
+    async _run(scale, method, newLayer) {
         if (this.isProcessing) return;
         this.isProcessing = true;
 
-        alertify.message(
-            `Upscaling ${scale}× with ${method}... please wait`, 0
-        );
+        var caps = this._caps || {};
+        var methodLabel = method === 'auto'
+            ? `Auto (${caps.recommended_label || 'best available'})`
+            : (METHOD_LABELS[method] || method);
+
+        alertify.message(`Upscaling ${scale}× · ${methodLabel}...`, 0);
 
         try {
             var layerCanvas = document.createElement('canvas');
@@ -111,11 +169,7 @@ class Image_upscale_class {
             var r = await fetch(`${base}/api/print/upscale`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    image: imageB64,
-                    scale: scale,
-                    method: method,
-                }),
+                body: JSON.stringify({ image: imageB64, scale, method }),
             });
 
             if (!r.ok) {
@@ -131,11 +185,15 @@ class Image_upscale_class {
                 resultCanvas.height = img.naturalHeight;
                 resultCanvas.getContext('2d').drawImage(img, 0, 0);
 
+                // Human-readable method label for undo history
+                var usedLabel = result.method.replace('realesrgan_pytorch_', 'ESRGAN/')
+                                             .replace('realesrgan_ncnn', 'ESRGAN/NCNN');
+
                 if (newLayer) {
                     app.State.do_action(
                         new app.Actions.Bundle_action('upscale_layer', 'Upscale', [
                             new app.Actions.Insert_layer_action({
-                                name: `${scale}× upscale (${result.method})`,
+                                name: `${scale}× ${usedLabel}`,
                                 type: 'image',
                                 data: img.src,
                                 x: 0, y: 0,
@@ -156,8 +214,7 @@ class Image_upscale_class {
 
                 alertify.dismissAll();
                 alertify.success(
-                    `Upscaled to ${result.output.width}×${result.output.height}px` +
-                    ` (${result.method})`
+                    `${result.output.width}×${result.output.height}px · ${usedLabel}`
                 );
                 this.isProcessing = false;
             };

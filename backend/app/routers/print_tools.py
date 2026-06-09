@@ -61,7 +61,8 @@ class FrameFitRequest(BaseModel):
 class UpscaleRequest(BaseModel):
     image: str                              # base64
     scale: float = 2.0                      # 1.5, 2, 3, 4
-    method: Literal["lanczos", "ai"] = "lanczos"
+    # auto = pick best available; lanczos = always works; realesrgan_pytorch / realesrgan_ncnn = explicit
+    method: str = "auto"
 
 
 # ── Frame sizes endpoint ───────────────────────────────────────────────────
@@ -293,15 +294,43 @@ def _mirror_fill(canvas, mask, scaled, gap_dir, gap_a, gap_b, target_w, target_h
 
 # ── Upscale ────────────────────────────────────────────────────────────────
 
+@router.post("/upscale/refresh-caps")
+def upscale_refresh_caps():
+    """Bust the capability cache (call after installing Real-ESRGAN without restarting)."""
+    from app.services.upscale import invalidate_caps_cache, probe_upscale_capabilities
+    invalidate_caps_cache()
+    return probe_upscale_capabilities()
+
+
+@router.get("/upscale/available")
+def upscale_available():
+    """
+    Return capability probe: which upscale methods are available,
+    which device will be used, and which method is recommended.
+    Frontend uses this to populate the method selector.
+    """
+    from app.services.upscale import probe_upscale_capabilities
+    caps = probe_upscale_capabilities()
+    return caps
+
+
 @router.post("/upscale")
 async def upscale(req: UpscaleRequest):
     """
-    Upscale image.
-    method=lanczos  — always available, fast, good for clean images
-    method=ai       — Real-ESRGAN if installed, else falls back to lanczos
+    Upscale image.  method values:
+      auto                — pick best available (recommended)
+      realesrgan_pytorch  — Real-ESRGAN via PyTorch (CUDA/MPS/CPU)
+      realesrgan_ncnn     — Real-ESRGAN NCNN Vulkan binary
+      lanczos             — always available, instant
+    Any AI method falls back to the next best if unavailable.
     """
     if not (1.1 <= req.scale <= 8.0):
         raise HTTPException(status_code=400, detail="scale must be 1.1–8.0")
+
+    valid_methods = {"auto", "realesrgan_pytorch", "realesrgan_ncnn", "lanczos"}
+    if req.method not in valid_methods:
+        raise HTTPException(status_code=400,
+                            detail=f"method must be one of {sorted(valid_methods)}")
 
     try:
         image = Image.open(BytesIO(_decode(req.image))).convert("RGB")
@@ -309,67 +338,19 @@ async def upscale(req: UpscaleRequest):
         raise HTTPException(status_code=400, detail=f"Could not decode image: {e}")
 
     orig_w, orig_h = image.size
-    new_w = round(orig_w * req.scale)
-    new_h = round(orig_h * req.scale)
 
-    method_used = req.method
-
-    if req.method == "ai":
-        try:
-            result_bytes = await asyncio.get_event_loop().run_in_executor(
-                None, _realesrgan_upscale, image, req.scale
-            )
-            result = Image.open(BytesIO(result_bytes)).convert("RGB")
-            method_used = "realesrgan"
-        except Exception as e:
-            print(f"Real-ESRGAN failed, using Lanczos: {e}")
-            result = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            method_used = "lanczos_fallback"
-    else:
-        result = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    try:
+        from app.services.upscale import upscale_image
+        result_bytes, method_used = await upscale_image(image, req.scale, req.method)
+        result = Image.open(BytesIO(result_bytes))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
     return {
-        "result": _encode(_to_png(result)),
+        "result": _encode(result_bytes),
         "method": method_used,
         "original": {"width": orig_w, "height": orig_h},
-        "output": {"width": result.width, "height": result.height},
-        "scale": req.scale,
+        "output":   {"width": result.width, "height": result.height},
+        "scale":    req.scale,
     }
-
-
-def _realesrgan_upscale(image: Image.Image, scale: float) -> bytes:
-    """Run Real-ESRGAN upscaling. Raises if not installed."""
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-    from realesrgan import RealESRGANer
-    import torch
-    import numpy as np
-
-    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
-                    num_block=23, num_grow_ch=32, scale=4)
-    upsampler = RealESRGANer(
-        scale=4,
-        model_path=None,  # auto-download
-        model=model,
-        tile=400,
-        tile_pad=10,
-        pre_pad=0,
-        half=torch.cuda.is_available(),
-    )
-    img_np = np.array(image)[:, :, ::-1]  # RGB→BGR for cv2
-    output, _ = upsampler.enhance(img_np, outscale=scale)
-    result = Image.fromarray(output[:, :, ::-1])  # BGR→RGB
-    buf = BytesIO()
-    result.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-@router.get("/upscale/available")
-def upscale_available():
-    """Check which upscale methods are available."""
-    ai_available = False
-    try:
-        import realesrgan  # noqa: F401
-        ai_available = True
-    except ImportError:
-        pass
-    return {"lanczos": True, "realesrgan": ai_available}
