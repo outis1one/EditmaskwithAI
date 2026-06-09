@@ -331,6 +331,16 @@ const menuDefinition = [
 				target: 'image/remove_background.remove_background'
 			},
 			{
+				name: 'Fit to Frame...',
+				ellipsis: true,
+				target: 'image/frame_fit.frame_fit'
+			},
+			{
+				name: 'Upscale...',
+				ellipsis: true,
+				target: 'image/upscale.upscale'
+			},
+			{
 				divider: true
 			},
 			{
