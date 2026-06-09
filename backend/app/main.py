@@ -8,7 +8,7 @@ import os
 
 from app.config import settings
 from app.database import init_db
-from app.routers import projects, edits, images, patches, generate, tools
+from app.routers import projects, edits, images, patches, generate, tools, ai_tools
 
 
 @asynccontextmanager
@@ -41,6 +41,7 @@ app.include_router(images.router)
 app.include_router(patches.router)
 app.include_router(generate.router)
 app.include_router(tools.router)
+app.include_router(ai_tools.router)
 
 
 @app.get("/api")

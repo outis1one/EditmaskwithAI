@@ -12,12 +12,23 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
 
     # AI Provider
-    ai_provider: str = "mock"  # Options: openai, stability, replicate, mock
+    # Local: blank or "mock" — always available, no config needed
+    # Remote (set ONE): openai | invokeai | comfyui | replicate | stability
+    ai_provider: str = "mock"
 
     # Provider API Keys
     openai_api_key: str = ""
+    openai_model: str = "dall-e-3"
     stability_api_key: str = ""
     replicate_api_key: str = ""
+
+    # InvokeAI (self-hosted)
+    invokeai_url: str = ""
+    invokeai_default_model: str = "flux-dev"
+
+    # ComfyUI (self-hosted)
+    comfyui_url: str = ""
+    comfyui_default_model: str = "v1-5-pruned-emaonly.ckpt"
 
     # Model Selection (optional, provider-specific)
     stability_model: str = "sdxl"  # Options: sdxl, sd15, sd21

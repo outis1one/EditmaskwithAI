@@ -111,6 +111,29 @@ config.TOOLS = [
 		attributes: {},
 	},
 	{
+		name: 'ai_lama_erase',
+		title: 'AI Magic Erase (LaMa) - Paint over to erase',
+		attributes: {
+			size: {
+				value: 30,
+				min: 5,
+				max: 200,
+			},
+		},
+	},
+	{
+		name: 'ai_smart_inpaint',
+		title: 'AI Smart Inpaint - Paint + describe replacement',
+		on_activate: 'on_activate',
+		attributes: {
+			size: {
+				value: 30,
+				min: 5,
+				max: 200,
+			},
+		},
+	},
+	{
 		name: 'magic_wand',
 		title: 'Magic Wand (Color Select)',
 		attributes: {
