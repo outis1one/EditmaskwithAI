@@ -47,8 +47,41 @@ class Tools_ai_provider_settings_class {
                 },
                 {
                     name: 'provider',
-                    title: 'Remote provider:',
+                    title: 'Default provider (used unless overridden below):',
                     value: ls_get('provider', remote.provider || ''),
+                    values: ['', 'openai', 'invokeai', 'comfyui', 'replicate'],
+                    type: 'select',
+                },
+                // ── Per-operation overrides ───────────────────────────────
+                {
+                    title: '',
+                    html: '<div style="font-size:11px;color:#888;margin:2px 0 6px;">Per-operation overrides — blank = use default above</div>',
+                },
+                {
+                    name: 'provider_inpaint',
+                    title: 'Inpaint / Replace Selection:',
+                    value: ls_get('provider_inpaint', remote.overrides?.inpaint || ''),
+                    values: ['', 'openai', 'invokeai', 'comfyui', 'replicate'],
+                    type: 'select',
+                },
+                {
+                    name: 'provider_txt2img',
+                    title: 'Text → Image:',
+                    value: ls_get('provider_txt2img', remote.overrides?.txt2img || ''),
+                    values: ['', 'openai', 'invokeai', 'comfyui', 'replicate'],
+                    type: 'select',
+                },
+                {
+                    name: 'provider_img2img',
+                    title: 'Image → Image:',
+                    value: ls_get('provider_img2img', remote.overrides?.img2img || ''),
+                    values: ['', 'openai', 'invokeai', 'comfyui', 'replicate'],
+                    type: 'select',
+                },
+                {
+                    name: 'provider_outpaint',
+                    title: 'Expand Canvas (Outpaint):',
+                    value: ls_get('provider_outpaint', remote.overrides?.outpaint || ''),
                     values: ['', 'openai', 'invokeai', 'comfyui', 'replicate'],
                     type: 'select',
                 },
@@ -108,7 +141,11 @@ class Tools_ai_provider_settings_class {
 
     async _save(params) {
         // Persist to localStorage
-        ls_set('provider',       params.provider || '');
+        ls_set('provider',          params.provider || '');
+        ls_set('provider_inpaint',  params.provider_inpaint  || '');
+        ls_set('provider_txt2img',  params.provider_txt2img  || '');
+        ls_set('provider_img2img',  params.provider_img2img  || '');
+        ls_set('provider_outpaint', params.provider_outpaint || '');
         ls_set('openai_key',     params.openai_key || '');
         ls_set('openai_model',   params.openai_model || 'dall-e-3');
         ls_set('invokeai_url',   params.invokeai_url || '');
@@ -117,17 +154,21 @@ class Tools_ai_provider_settings_class {
         ls_set('comfyui_model',  params.comfyui_model || 'v1-5-pruned-emaonly.ckpt');
         ls_set('replicate_key',  params.replicate_key || '');
 
-        // Push to backend (requires a running server that accepts runtime config)
+        // Push to backend
         try {
             var payload = {
-                ai_provider:           params.provider || '',
-                openai_api_key:        params.openai_key || '',
-                openai_model:          params.openai_model || 'dall-e-3',
-                invokeai_url:          params.invokeai_url || '',
-                invokeai_default_model: params.invokeai_model || 'flux-dev',
-                comfyui_url:           params.comfyui_url || '',
-                comfyui_default_model:  params.comfyui_model || '',
-                replicate_api_key:     params.replicate_key || '',
+                ai_provider:              params.provider || '',
+                ai_provider_inpaint:      params.provider_inpaint  || '',
+                ai_provider_txt2img:      params.provider_txt2img  || '',
+                ai_provider_img2img:      params.provider_img2img  || '',
+                ai_provider_outpaint:     params.provider_outpaint || '',
+                openai_api_key:           params.openai_key || '',
+                openai_model:             params.openai_model || 'dall-e-3',
+                invokeai_url:             params.invokeai_url || '',
+                invokeai_default_model:   params.invokeai_model || 'flux-dev',
+                comfyui_url:              params.comfyui_url || '',
+                comfyui_default_model:    params.comfyui_model || '',
+                replicate_api_key:        params.replicate_key || '',
             };
             var base = window.API_BASE_URL || '';
             var r = await fetch(`${base}/api/config`, {

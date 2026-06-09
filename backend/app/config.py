@@ -13,8 +13,17 @@ class Settings(BaseSettings):
 
     # AI Provider
     # Local: blank or "mock" — always available, no config needed
-    # Remote (set ONE): openai | invokeai | comfyui | replicate | stability
+    # Remote default (used for any operation without a specific override):
+    #   openai | invokeai | comfyui | replicate | stability
     ai_provider: str = "mock"
+
+    # Per-operation provider overrides — blank means use ai_provider default.
+    # Operations: inpaint, txt2img, img2img, outpaint
+    # Example: AI_PROVIDER_TXT2IMG=openai  (use OpenAI for text-to-image only)
+    ai_provider_inpaint: str = ""   # remote inpaint / replace selection
+    ai_provider_txt2img: str = ""   # text-to-image
+    ai_provider_img2img: str = ""   # image-to-image
+    ai_provider_outpaint: str = ""  # expand canvas
 
     # Provider API Keys
     openai_api_key: str = ""

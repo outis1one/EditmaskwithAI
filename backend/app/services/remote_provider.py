@@ -407,25 +407,60 @@ class ComfyUIProvider(RemoteAIProvider):
         return ["inpaint", "txt2img", "img2img", "outpaint"]
 
 
-def get_remote_provider() -> Optional[RemoteAIProvider]:
-    """Return the configured remote provider, or None if not configured."""
+def _build_provider(name: str) -> Optional[RemoteAIProvider]:
+    """Instantiate a named provider from current settings."""
     from app.config import settings
 
-    provider = (settings.ai_provider or "").lower()
+    name = (name or "").lower().strip()
 
-    if provider == "openai":
+    if name == "openai":
         if not settings.openai_api_key:
             return None
         return OpenAIRemoteProvider(settings.openai_api_key, settings.openai_model)
 
-    if provider == "invokeai":
+    if name == "invokeai":
         if not settings.invokeai_url:
             return None
         return InvokeAIProvider(settings.invokeai_url, settings.invokeai_default_model)
 
-    if provider == "comfyui":
+    if name == "comfyui":
         if not settings.comfyui_url:
             return None
         return ComfyUIProvider(settings.comfyui_url, settings.comfyui_default_model)
 
     return None
+
+
+# Map operation names to the settings field that holds the override
+_OP_FIELD = {
+    "inpaint":  "ai_provider_inpaint",
+    "txt2img":  "ai_provider_txt2img",
+    "img2img":  "ai_provider_img2img",
+    "outpaint": "ai_provider_outpaint",
+}
+
+
+def get_remote_provider(operation: Optional[str] = None) -> Optional[RemoteAIProvider]:
+    """
+    Return the provider for a given operation.
+
+    Resolution order:
+      1. Per-operation override (AI_PROVIDER_INPAINT, AI_PROVIDER_TXT2IMG, etc.)
+      2. Global default (AI_PROVIDER)
+      3. None (local-only mode)
+
+    Example .env for mixed setup:
+      AI_PROVIDER=invokeai          # default for inpaint/img2img/outpaint
+      AI_PROVIDER_TXT2IMG=openai    # use OpenAI only for text-to-image
+    """
+    from app.config import settings
+
+    if operation and operation in _OP_FIELD:
+        override = getattr(settings, _OP_FIELD[operation], "")
+        if override:
+            provider = _build_provider(override)
+            if provider is not None:
+                return provider
+            # override configured but not usable (missing key/url) — fall through to default
+
+    return _build_provider(settings.ai_provider)

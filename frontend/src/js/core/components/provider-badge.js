@@ -34,8 +34,19 @@ export async function mountProviderBadge(container) {
         dot.style.background = '#44cc44';
         badge.style.background = '#1a2a1a';
         badge.style.color = '#aaffaa';
-        label.textContent = remote.provider + (local.gpu_detected ? ' · GPU' : ' · CPU');
-        badge.title = 'Remote provider: ' + remote.provider + '\nCapabilities: ' + (remote.capabilities || []).join(', ');
+
+        // Show override summary if any operations use different providers
+        var overrides = remote.overrides || {};
+        var overrideEntries = Object.entries(overrides).filter(([, v]) => v);
+        var overrideStr = overrideEntries.length
+            ? ' · ' + overrideEntries.map(([k, v]) => `${k}→${v}`).join(', ')
+            : '';
+        label.textContent = remote.provider + overrideStr + (local.gpu_detected ? ' · GPU' : '');
+
+        var opLines = Object.entries(remote.operations || {})
+            .map(([op, s]) => `${op}: ${s.provider || remote.provider} ${s.healthy ? '✓' : '✗'}`)
+            .join('\n');
+        badge.title = opLines || ('Provider: ' + remote.provider);
     } else if (remote.provider && !remote.healthy) {
         dot.style.background = '#ffaa00';
         badge.style.background = '#2a2000';
