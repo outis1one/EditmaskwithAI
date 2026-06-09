@@ -244,6 +244,49 @@ async def outpaint(req: OutpaintRequest):
 
 # ─── Config / capabilities ────────────────────────────────────────────────────
 
+class ConfigUpdateRequest(BaseModel):
+    ai_provider: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None
+    invokeai_url: Optional[str] = None
+    invokeai_default_model: Optional[str] = None
+    comfyui_url: Optional[str] = None
+    comfyui_default_model: Optional[str] = None
+    replicate_api_key: Optional[str] = None
+    stability_api_key: Optional[str] = None
+
+
+@router.post("/config")
+async def update_config(req: ConfigUpdateRequest):
+    """
+    Apply runtime provider settings (no restart needed).
+    Values are applied to the live settings object in-process.
+    They do NOT persist across restarts — set them in .env for permanence.
+    """
+    from app.config import settings
+
+    if req.ai_provider is not None:
+        settings.ai_provider = req.ai_provider
+    if req.openai_api_key:
+        settings.openai_api_key = req.openai_api_key
+    if req.openai_model:
+        settings.openai_model = req.openai_model
+    if req.invokeai_url is not None:
+        settings.invokeai_url = req.invokeai_url
+    if req.invokeai_default_model:
+        settings.invokeai_default_model = req.invokeai_default_model
+    if req.comfyui_url is not None:
+        settings.comfyui_url = req.comfyui_url
+    if req.comfyui_default_model:
+        settings.comfyui_default_model = req.comfyui_default_model
+    if req.replicate_api_key:
+        settings.replicate_api_key = req.replicate_api_key
+    if req.stability_api_key:
+        settings.stability_api_key = req.stability_api_key
+
+    return {"status": "ok", "ai_provider": settings.ai_provider}
+
+
 @router.get("/config")
 async def get_config():
     """

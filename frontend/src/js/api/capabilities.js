@@ -49,8 +49,17 @@ export function hasRemote() {
 }
 
 /**
+ * Invalidate cache and re-fetch (call after saving provider settings).
+ */
+export async function refreshCapabilities() {
+    _caps = null;
+    _fetchPromise = null;
+    return getCapabilities();
+}
+
+/**
  * Kick off the fetch immediately at module load time so it's ready when tools need it.
  */
 getCapabilities();
 
-export default { getCapabilities, getCachedCapabilities, hasRemote };
+export default { getCapabilities, getCachedCapabilities, hasRemote, refreshCapabilities };

@@ -134,6 +134,12 @@ config.TOOLS = [
 		},
 	},
 	{
+		name: 'ai_replace_selection',
+		title: 'AI Replace Selection - Use any selection tool first',
+		on_activate: 'on_activate',
+		attributes: {},
+	},
+	{
 		name: 'magic_wand',
 		title: 'Magic Wand (Color Select)',
 		attributes: {

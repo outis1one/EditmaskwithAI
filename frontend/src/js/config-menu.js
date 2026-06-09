@@ -816,7 +816,30 @@ const menuDefinition = [
 				name: 'Settings',
 				ellipsis: true,
 				target: 'tools/settings.settings'
+			},
+			{
+				divider: true
+			},
+			{
+				name: 'AI Provider Settings',
+				ellipsis: true,
+				target: 'tools/ai_provider_settings.ai_provider_settings'
 			}
+		]
+	},
+	{
+		name: 'Generate',
+		children: [
+			{
+				name: 'Text → Image',
+				ellipsis: true,
+				target: 'generate/text_to_image.text_to_image'
+			},
+			{
+				name: 'Expand Canvas (Outpaint)',
+				ellipsis: true,
+				target: 'generate/outpaint.outpaint'
+			},
 		]
 	},
 	{
