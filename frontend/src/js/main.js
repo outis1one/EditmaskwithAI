@@ -23,6 +23,7 @@ import Base_search_class from './core/base-search.js';
 import File_open_class from './modules/file/open.js';
 import File_save_class from './modules/file/save.js';
 import * as Actions from './actions/index.js';
+import { mountProviderBadge } from './core/components/provider-badge.js';
 
 window.addEventListener('load', function (e) {
 	// Initiate app
@@ -54,4 +55,7 @@ window.addEventListener('load', function (e) {
 	// Render all
 	GUI.init();
 	Layers.init();
+
+	// Mount provider badge in the tools panel footer
+	mountProviderBadge(document.getElementById('tools_container') || document.body);
 }, false);

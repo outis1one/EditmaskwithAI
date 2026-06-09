@@ -12,12 +12,32 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
 
     # AI Provider
-    ai_provider: str = "mock"  # Options: openai, stability, replicate, mock
+    # Local: blank or "mock" — always available, no config needed
+    # Remote default (used for any operation without a specific override):
+    #   openai | invokeai | comfyui | replicate | stability
+    ai_provider: str = "mock"
+
+    # Per-operation provider overrides — blank means use ai_provider default.
+    # Operations: inpaint, txt2img, img2img, outpaint
+    # Example: AI_PROVIDER_TXT2IMG=openai  (use OpenAI for text-to-image only)
+    ai_provider_inpaint: str = ""   # remote inpaint / replace selection
+    ai_provider_txt2img: str = ""   # text-to-image
+    ai_provider_img2img: str = ""   # image-to-image
+    ai_provider_outpaint: str = ""  # expand canvas
 
     # Provider API Keys
     openai_api_key: str = ""
+    openai_model: str = "dall-e-3"
     stability_api_key: str = ""
     replicate_api_key: str = ""
+
+    # InvokeAI (self-hosted)
+    invokeai_url: str = ""
+    invokeai_default_model: str = "flux-dev"
+
+    # ComfyUI (self-hosted)
+    comfyui_url: str = ""
+    comfyui_default_model: str = "v1-5-pruned-emaonly.ckpt"
 
     # Model Selection (optional, provider-specific)
     stability_model: str = "sdxl"  # Options: sdxl, sd15, sd21

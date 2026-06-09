@@ -12,19 +12,14 @@ httpx==0.26.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
 email-validator==2.1.0
-opencv-python-headless==4.9.0.80
+opencv-python-headless>=4.10.0
 # SAM (Segment Anything) for smart object selection - runs locally, no API needed
 torch==2.1.2
 torchvision==0.16.2
 segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
 
-# Note: Using OpenCV DNN instead of onnxruntime for U2Net
-# (onnxruntime has executable stack issues in some Docker environments)
+# Local AI inpainting — LaMa model (auto GPU/CPU, no API key needed)
+simple-lama-inpainting
 
-# NOTE: rembg (background removal) disabled due to dependency conflicts
-# rembg>=2.0.70 requires:
-#   - scikit-image>=0.26.0 which requires numpy>=2.0
-#   - Pillow>=12.1.0
-# But opencv-python-headless 4.9.0.80 requires numpy<2.0
-# To enable rembg, need to update opencv-python-headless to 4.10+ (numpy 2.x compatible)
-# and update all dependent packages accordingly
+# Background removal — rembg enabled now that opencv 4.10+ supports numpy 2.x
+rembg[gpu]
