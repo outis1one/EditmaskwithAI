@@ -2,12 +2,8 @@
  * Upscale — increase image resolution.
  * Fetches available methods from /api/print/upscale/available on first open.
  * Auto-selects the recommended method; user can override.
- *
- * Methods (in priority order, server picks best):
- *   auto               — server picks best available
- *   realesrgan_pytorch — Real-ESRGAN via PyTorch (CUDA > MPS > CPU)
- *   realesrgan_ncnn    — Real-ESRGAN NCNN Vulkan binary (any GPU)
- *   lanczos            — always available, instant
+ * If no AI upscaler is found, polls /api/print/upscale/install-status while
+ * the backend auto-installs Real-ESRGAN NCNN Vulkan, then refreshes and continues.
  *
  * Menu target: image/upscale.upscale
  */
@@ -20,7 +16,6 @@ import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.j
 
 var instance = null;
 
-// Method display labels
 const METHOD_LABELS = {
     auto:                'Auto (best available)',
     realesrgan_pytorch:  'Real-ESRGAN — PyTorch',
@@ -45,15 +40,25 @@ class Image_upscale_class {
             return;
         }
 
+        // If a previous caps fetch showed no AI upscaler, check install progress
         var caps = await this._fetchCaps();
+        if (!caps.realesrgan_pytorch && !caps.realesrgan_ncnn) {
+            await this._waitForInstall(caps);
+            // Re-fetch caps after install
+            this._caps = null;
+            caps = await this._fetchCaps();
+        }
+
+        this._showDialog(caps);
+    }
+
+    _showDialog(caps) {
         var W = config.layer.width_original;
         var H = config.layer.height_original;
 
-        // Build method selector — only show what's available + auto
         var available = ['auto', ...caps.methods];
-        var methodValues = [...new Set(available)]; // dedupe
+        var methodValues = [...new Set(available)];
 
-        // Label each option, mark recommended
         var methodLabels = methodValues.map(m => {
             var label = METHOD_LABELS[m] || m;
             if (m === 'auto') {
@@ -64,7 +69,6 @@ class Image_upscale_class {
             return label;
         });
 
-        // Annotate with device info
         var deviceNote = '';
         if (caps.realesrgan_pytorch) {
             var dev = caps.realesrgan_pytorch_device;
@@ -77,8 +81,7 @@ class Image_upscale_class {
             deviceNote += 'NCNN Vulkan binary found. ';
         }
         if (!caps.realesrgan_pytorch && !caps.realesrgan_ncnn) {
-            deviceNote = 'No AI upscaler detected — Lanczos only. ' +
-                'Install Real-ESRGAN for AI quality (see docs).';
+            deviceNote = 'No AI upscaler available — Lanczos only.';
         }
 
         var _this = this;
@@ -103,7 +106,7 @@ class Image_upscale_class {
                 {
                     name: 'method',
                     title: 'Method:',
-                    value: methodLabels[0],   // auto
+                    value: methodLabels[0],
                     values: methodLabels,
                     type: 'select',
                 },
@@ -114,12 +117,57 @@ class Image_upscale_class {
                 },
             ],
             on_finish: async function (params) {
-                // Map label back to method key
                 var labelIdx = methodLabels.indexOf(params.method);
                 var methodKey = labelIdx >= 0 ? methodValues[labelIdx] : 'auto';
                 var scale = parseFloat(params.scale);
                 await _this._run(scale, methodKey, params.new_layer);
             },
+        });
+    }
+
+    /**
+     * Poll install-status until done/failed, showing a progress bar notification.
+     */
+    async _waitForInstall(caps) {
+        var installStatus = caps.ncnn_install_status || {};
+        if (installStatus.state === 'done' || installStatus.state === 'failed') {
+            return;
+        }
+
+        return new Promise((resolve) => {
+            var msg = alertify.message(
+                `<div>Installing Real-ESRGAN AI upscaler…<br>
+                <progress id="esrgan-install-progress" value="0" max="100"
+                  style="width:100%;margin-top:6px;"></progress>
+                <span id="esrgan-install-pct">0%</span></div>`,
+                0
+            );
+
+            var poll = setInterval(async () => {
+                try {
+                    var base = window.API_BASE_URL || '';
+                    var r = await fetch(`${base}/api/print/upscale/install-status`);
+                    if (!r.ok) return;
+                    var s = await r.json();
+
+                    var bar = document.getElementById('esrgan-install-progress');
+                    var pct = document.getElementById('esrgan-install-pct');
+                    if (bar) bar.value = s.progress || 0;
+                    if (pct) pct.textContent = `${s.progress || 0}%`;
+
+                    if (s.state === 'done') {
+                        clearInterval(poll);
+                        alertify.dismissAll();
+                        alertify.success('Real-ESRGAN NCNN installed ✓');
+                        resolve();
+                    } else if (s.state === 'failed') {
+                        clearInterval(poll);
+                        alertify.dismissAll();
+                        alertify.warning('AI upscaler install failed — using Lanczos.');
+                        resolve();
+                    }
+                } catch { /* network hiccup, keep polling */ }
+            }, 1500);
         });
     }
 
@@ -133,7 +181,6 @@ class Image_upscale_class {
             }
         } catch { /* ignore */ }
 
-        // Safe default if fetch failed
         if (!this._caps) {
             this._caps = {
                 lanczos: true,
@@ -142,6 +189,7 @@ class Image_upscale_class {
                 recommended: 'lanczos',
                 recommended_label: 'Lanczos',
                 methods: ['lanczos'],
+                ncnn_install_status: { state: 'idle', progress: 0 },
             };
         }
         return this._caps;
@@ -156,7 +204,7 @@ class Image_upscale_class {
             ? `Auto (${caps.recommended_label || 'best available'})`
             : (METHOD_LABELS[method] || method);
 
-        alertify.message(`Upscaling ${scale}× · ${methodLabel}...`, 0);
+        alertify.message(`Upscaling ${scale}× · ${methodLabel}…`, 0);
 
         try {
             var layerCanvas = document.createElement('canvas');
@@ -185,7 +233,6 @@ class Image_upscale_class {
                 resultCanvas.height = img.naturalHeight;
                 resultCanvas.getContext('2d').drawImage(img, 0, 0);
 
-                // Human-readable method label for undo history
                 var usedLabel = result.method.replace('realesrgan_pytorch_', 'ESRGAN/')
                                              .replace('realesrgan_ncnn', 'ESRGAN/NCNN');
 

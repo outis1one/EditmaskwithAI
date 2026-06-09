@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
+import asyncio
 import os
 
 from app.config import settings
@@ -13,8 +14,13 @@ from app.routers import projects, edits, images, patches, generate, tools, ai_to
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup"""
+    """Initialize database on startup; auto-install Real-ESRGAN NCNN in background."""
     init_db()
+    # Kick off NCNN install in background if no AI upscaler detected
+    from app.services.upscale import probe_upscale_capabilities, ensure_ncnn_installed
+    caps = probe_upscale_capabilities()
+    if not caps["realesrgan_pytorch"] and not caps["realesrgan_ncnn"]:
+        asyncio.create_task(ensure_ncnn_installed())
     yield
 
 

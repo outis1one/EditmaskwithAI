@@ -303,15 +303,36 @@ def upscale_refresh_caps():
 
 
 @router.get("/upscale/available")
-def upscale_available():
+async def upscale_available():
     """
     Return capability probe: which upscale methods are available,
     which device will be used, and which method is recommended.
+    If no AI upscaler is found, triggers background NCNN auto-install.
     Frontend uses this to populate the method selector.
     """
-    from app.services.upscale import probe_upscale_capabilities
+    from app.services.upscale import probe_upscale_capabilities, ensure_ncnn_installed, get_install_status
     caps = probe_upscale_capabilities()
+    # Auto-install NCNN if no AI upscaler is available yet
+    if not caps["realesrgan_pytorch"] and not caps["realesrgan_ncnn"]:
+        asyncio.create_task(ensure_ncnn_installed())
+    caps["ncnn_install_status"] = get_install_status()
     return caps
+
+
+@router.get("/upscale/install-status")
+def upscale_install_status():
+    """Poll for Real-ESRGAN NCNN auto-install progress."""
+    from app.services.upscale import get_install_status, probe_upscale_capabilities, _find_ncnn_binary
+    status = get_install_status()
+    # If install just finished, refresh caps
+    if status["state"] == "done":
+        from app.services.upscale import invalidate_caps_cache
+        invalidate_caps_cache()
+        caps = probe_upscale_capabilities()
+        status["ncnn_available"] = caps["realesrgan_ncnn"]
+    else:
+        status["ncnn_available"] = False
+    return status
 
 
 @router.post("/upscale")
