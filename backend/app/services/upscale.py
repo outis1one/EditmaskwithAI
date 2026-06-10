@@ -1,21 +1,22 @@
 """
 Upscale service — auto-detects best available method and runs it.
-Auto-installs Real-ESRGAN NCNN Vulkan binary on first use if no AI upscaler found.
+Auto-installs Real-ESRGAN NCNN Vulkan binary when Vulkan GPU is available.
+Skips NCNN on headless/CPU-only machines and uses PyTorch CPU or Lanczos instead.
 
 Priority (auto mode):
   1. Real-ESRGAN PyTorch + CUDA GPU       — fastest, best quality
   2. Real-ESRGAN PyTorch + Apple MPS       — fast on Apple Silicon
-  3. Real-ESRGAN NCNN Vulkan binary        — fast on any GPU (Intel/AMD/integrated)
-  4. Real-ESRGAN PyTorch CPU               — works, slow (warn user)
+  3. Real-ESRGAN NCNN Vulkan binary        — fast on any Vulkan GPU
+  4. Real-ESRGAN PyTorch CPU               — AI quality, slow (~1-3 min)
   5. Lanczos                               — always available, instant
 
 Capability probe is run once at first call and cached.
-NCNN binary is auto-downloaded if no AI upscaler is found.
+NCNN binary is auto-downloaded only when Vulkan is detected.
+Set REALESRGAN_NCNN=force env var to override the Vulkan check.
 """
 
 import asyncio
 import os
-import platform
 import shutil
 import stat
 import subprocess
@@ -23,7 +24,7 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
@@ -47,8 +48,10 @@ _PLATFORM_ZIP = {
 
 class InstallState(str, Enum):
     idle        = "idle"
+    skipped     = "skipped"     # headless / no Vulkan
     downloading = "downloading"
     extracting  = "extracting"
+    verifying   = "verifying"
     done        = "done"
     failed      = "failed"
 
@@ -76,33 +79,109 @@ def get_install_status() -> dict:
 
 
 def _ncnn_binary_name() -> str:
+    return "realesrgan-ncnn-vulkan.exe" if "win" in sys.platform.lower() else "realesrgan-ncnn-vulkan"
+
+
+def _vulkan_available() -> bool:
+    """
+    Check whether a Vulkan-capable GPU is accessible.
+    Returns True if confident a GPU with Vulkan exists; False on headless/CPU-only.
+    Set REALESRGAN_NCNN=force to bypass this check.
+    """
+    if os.environ.get("REALESRGAN_NCNN", "").lower() == "force":
+        return True
+
     plat = sys.platform.lower()
-    return "realesrgan-ncnn-vulkan.exe" if "win" in plat else "realesrgan-ncnn-vulkan"
+
+    if plat == "linux":
+        # DRI render nodes exist when a GPU is present and drivers loaded
+        dri = Path("/dev/dri")
+        if dri.exists() and list(dri.glob("renderD*")):
+            return True
+        # Fallback: vulkaninfo (not always installed)
+        if shutil.which("vulkaninfo"):
+            r = subprocess.run(["vulkaninfo", "--summary"],
+                               capture_output=True, timeout=5)
+            if r.returncode == 0 and b"GPU" in r.stdout:
+                return True
+        return False
+
+    if plat == "darwin":
+        # macOS with Metal/MPS — Vulkan via MoltenVK always present on Apple Silicon/modern Intel
+        return True
+
+    if "win" in plat:
+        # Windows always has a display adapter; assume Vulkan available
+        return True
+
+    return False
+
+
+def _test_ncnn_binary(binary_path: Path) -> bool:
+    """Run binary with --help to confirm it actually works (Vulkan loads ok)."""
+    try:
+        r = subprocess.run(
+            [str(binary_path), "--help"],
+            capture_output=True, timeout=15,
+        )
+        # NCNN binary exits 255 for --help but prints usage; that's fine.
+        # A Vulkan init failure produces "no vulkan device" on stderr.
+        stderr = r.stderr.decode(errors="replace").lower()
+        if "no vulkan" in stderr or "failed to create" in stderr:
+            return False
+        return True
+    except Exception:
+        return False
 
 
 async def ensure_ncnn_installed() -> Optional[Path]:
     """
-    Check if NCNN binary is present; if not, download and install it.
-    Returns the binary Path on success, None on failure.
-    Serialised via _install_lock so concurrent callers wait for a single install.
+    Check for Vulkan, then download+install the NCNN binary if needed.
+    Skips silently on headless/CPU-only machines.
+    Returns binary Path on success, None otherwise.
     """
     global _install_status
 
     binary_path = NCNN_DEST_DIR / _ncnn_binary_name()
+
+    # Already installed — quick verify it still works
     if binary_path.exists() and os.access(binary_path, os.X_OK):
-        _install_status = InstallStatus(state=InstallState.done, progress=100,
-                                        message="Already installed.")
-        return binary_path
+        loop = asyncio.get_event_loop()
+        ok = await loop.run_in_executor(None, _test_ncnn_binary, binary_path)
+        if ok:
+            _install_status = InstallStatus(state=InstallState.done, progress=100,
+                                            message="Already installed.")
+            return binary_path
+        else:
+            # Binary exists but Vulkan broken — treat as headless
+            _install_status = InstallStatus(
+                state=InstallState.skipped,
+                message="Vulkan unavailable — skipping NCNN (using PyTorch CPU or Lanczos).",
+            )
+            return None
 
     async with _install_lock:
-        # Re-check after acquiring lock (another coroutine may have just finished)
+        # Re-check after lock
         if binary_path.exists() and os.access(binary_path, os.X_OK):
             _install_status = InstallStatus(state=InstallState.done, progress=100,
                                             message="Already installed.")
             return binary_path
 
-        if _install_status.state == InstallState.downloading:
-            return None  # install already in progress
+        if _install_status.state in (InstallState.downloading, InstallState.extracting,
+                                     InstallState.verifying):
+            return None  # already running
+
+        # Check Vulkan before downloading anything
+        loop = asyncio.get_event_loop()
+        has_vulkan = await loop.run_in_executor(None, _vulkan_available)
+        if not has_vulkan:
+            _install_status = InstallStatus(
+                state=InstallState.skipped,
+                message="No Vulkan GPU detected — skipping NCNN install. "
+                        "AI upscaling via PyTorch CPU or set REALESRGAN_NCNN=force to override.",
+            )
+            print("[upscale] Headless/no-Vulkan detected — skipping NCNN download.")
+            return None
 
         plat = sys.platform.lower()
         zip_name = _PLATFORM_ZIP.get(plat)
@@ -128,29 +207,25 @@ async def ensure_ncnn_installed() -> Optional[Path]:
             def _do_download():
                 def _progress(count, block, total):
                     if total > 0:
-                        pct = min(90, int(count * block * 90 / total))
-                        _install_status.progress = pct
+                        _install_status.progress = min(85, int(count * block * 85 / total))
                 urllib.request.urlretrieve(url, zip_path, _progress)
 
-            loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _do_download)
 
             # Extract
             _install_status.state    = InstallState.extracting
-            _install_status.progress = 92
+            _install_status.progress = 88
             _install_status.message  = "Extracting…"
 
             def _do_extract():
                 with zipfile.ZipFile(zip_path, "r") as zf:
                     zf.extractall(NCNN_DEST_DIR)
-                # Find binary (may be in a subdirectory)
                 found = list(NCNN_DEST_DIR.rglob(_ncnn_binary_name()))
                 if not found:
                     raise FileNotFoundError(f"Binary not found after extract: {_ncnn_binary_name()}")
                 extracted = found[0]
                 if extracted != binary_path:
                     extracted.rename(binary_path)
-                # Make executable
                 if "win" not in sys.platform.lower():
                     binary_path.chmod(
                         binary_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
@@ -159,11 +234,26 @@ async def ensure_ncnn_installed() -> Optional[Path]:
 
             await loop.run_in_executor(None, _do_extract)
 
+            # Verify binary actually works
+            _install_status.state    = InstallState.verifying
+            _install_status.progress = 95
+            _install_status.message  = "Verifying Vulkan…"
+
+            ok = await loop.run_in_executor(None, _test_ncnn_binary, binary_path)
+            if not ok:
+                binary_path.unlink(missing_ok=True)
+                _install_status = InstallStatus(
+                    state=InstallState.skipped,
+                    message="Binary installed but Vulkan unavailable at runtime — "
+                            "falling back to PyTorch CPU / Lanczos.",
+                )
+                print("[upscale] NCNN binary installed but Vulkan check failed — skipping.")
+                return None
+
             _install_status = InstallStatus(
                 state=InstallState.done, progress=100,
-                message=f"Installed: {binary_path}",
+                message=f"Real-ESRGAN NCNN installed: {binary_path}",
             )
-            # Bust caps cache so probe picks up new binary
             invalidate_caps_cache()
             return binary_path
 
@@ -183,10 +273,7 @@ _caps: Optional[dict] = None
 
 
 def probe_upscale_capabilities() -> dict:
-    """
-    Detect what upscaling hardware and software is available.
-    Result is cached after first call.
-    """
+    """Detect available upscaling methods. Cached after first call."""
     global _caps
     if _caps is not None:
         return _caps
@@ -245,19 +332,22 @@ def probe_upscale_capabilities() -> dict:
         caps["recommended"] = "realesrgan_pytorch"
         caps["recommended_label"] = "Real-ESRGAN (CPU — may be slow)"
     else:
-        caps["recommended"] = "lanczos"
-        caps["recommended_label"] = "Lanczos (installing Real-ESRGAN…)"
+        install_state = _install_status.state
+        if install_state in (InstallState.downloading, InstallState.extracting, InstallState.verifying):
+            caps["recommended_label"] = "Lanczos (AI upscaler installing…)"
+        elif install_state == InstallState.skipped:
+            caps["recommended_label"] = "Lanczos (headless — no Vulkan GPU)"
+        else:
+            caps["recommended_label"] = "Lanczos (no AI upscaler found)"
 
     _caps = caps
     return caps
 
 
 def _find_ncnn_binary() -> Optional[Path]:
-    """Find realesrgan-ncnn-vulkan binary on the system."""
     found = shutil.which("realesrgan-ncnn-vulkan")
     if found:
         return Path(found)
-
     candidates = [
         NCNN_DEST_DIR / _ncnn_binary_name(),
         Path("/usr/local/bin/realesrgan-ncnn-vulkan"),
@@ -272,7 +362,6 @@ def _find_ncnn_binary() -> Optional[Path]:
 
 
 def invalidate_caps_cache():
-    """Call after installing new software so next probe picks it up."""
     global _caps
     _caps = None
 
@@ -286,7 +375,6 @@ def _to_png_bytes(img: Image.Image) -> bytes:
 
 
 def upscale_lanczos(image: Image.Image, scale: float) -> tuple[bytes, str]:
-    """Pure Pillow Lanczos — instant, always available."""
     new_w = round(image.width * scale)
     new_h = round(image.height * scale)
     result = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
@@ -294,10 +382,6 @@ def upscale_lanczos(image: Image.Image, scale: float) -> tuple[bytes, str]:
 
 
 def upscale_realesrgan_pytorch(image: Image.Image, scale: float) -> tuple[bytes, str]:
-    """
-    Real-ESRGAN via PyTorch.
-    Uses CUDA > MPS > CPU automatically based on what's available.
-    """
     import torch
     from basicsr.archs.rrdbnet_arch import RRDBNet
     from realesrgan import RealESRGANer
@@ -313,8 +397,7 @@ def upscale_realesrgan_pytorch(image: Image.Image, scale: float) -> tuple[bytes,
 
     model_dir = Path("/app/data/models/realesrgan")
     model_dir.mkdir(parents=True, exist_ok=True)
-    model_name = f"RealESRGAN_x{model_scale}plus.pth"
-    model_path = model_dir / model_name
+    model_path = model_dir / f"RealESRGAN_x{model_scale}plus.pth"
     if not model_path.exists():
         model_path = None
 
@@ -333,16 +416,10 @@ def upscale_realesrgan_pytorch(image: Image.Image, scale: float) -> tuple[bytes,
     img_bgr = np.array(image)[:, :, ::-1].copy()
     enhanced, _ = upsampler.enhance(img_bgr, outscale=scale)
     result = Image.fromarray(enhanced[:, :, ::-1])
-
-    label = f"realesrgan_pytorch_{device}"
-    return _to_png_bytes(result), label
+    return _to_png_bytes(result), f"realesrgan_pytorch_{device}"
 
 
 def upscale_realesrgan_ncnn(image: Image.Image, scale: float) -> tuple[bytes, str]:
-    """
-    Real-ESRGAN via NCNN Vulkan binary — works on any GPU.
-    Runs as subprocess with temp file I/O.
-    """
     caps = probe_upscale_capabilities()
     binary = caps.get("realesrgan_ncnn_path")
     if not binary:
@@ -355,20 +432,16 @@ def upscale_realesrgan_ncnn(image: Image.Image, scale: float) -> tuple[bytes, st
     with tempfile.TemporaryDirectory() as tmpdir:
         in_path  = Path(tmpdir) / "input.png"
         out_path = Path(tmpdir) / "output.png"
-
         image.save(in_path, format="PNG")
 
-        model_name = f"realesrgan-x{model_scale}plus"
         cmd = [
-            binary, "-i", str(in_path), "-o", str(out_path),
-            "-s", str(model_scale), "-n", model_name, "-f", "png",
+            binary,
+            "-i", str(in_path), "-o", str(out_path),
+            "-s", str(model_scale), "-n", f"realesrgan-x{model_scale}plus", "-f", "png",
         ]
-
-        result_proc = subprocess.run(cmd, capture_output=True, timeout=300)
-        if result_proc.returncode != 0:
-            raise RuntimeError(
-                f"realesrgan-ncnn-vulkan failed: {result_proc.stderr.decode()}"
-            )
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"realesrgan-ncnn-vulkan failed: {r.stderr.decode()}")
 
         result = Image.open(out_path).convert("RGB")
         if result.width != target_w or result.height != target_h:
@@ -380,7 +453,7 @@ def upscale_realesrgan_ncnn(image: Image.Image, scale: float) -> tuple[bytes, st
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def upscale_sync(image: Image.Image, scale: float, method: str = "auto") -> tuple[bytes, str]:
-    """Upscale image synchronously. Returns (png_bytes, method_used_label)."""
+    """Upscale synchronously. Returns (png_bytes, method_label)."""
     caps = probe_upscale_capabilities()
 
     if method == "auto":
@@ -416,6 +489,6 @@ def upscale_sync(image: Image.Image, scale: float, method: str = "auto") -> tupl
 
 
 async def upscale_image(image: Image.Image, scale: float, method: str = "auto") -> tuple[bytes, str]:
-    """Async wrapper — runs upscale in thread pool to avoid blocking the event loop."""
+    """Async wrapper — runs upscale in thread pool."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, upscale_sync, image, scale, method)
