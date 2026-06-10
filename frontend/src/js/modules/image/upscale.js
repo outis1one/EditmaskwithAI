@@ -81,7 +81,13 @@ class Image_upscale_class {
             deviceNote += 'NCNN Vulkan binary found. ';
         }
         if (!caps.realesrgan_pytorch && !caps.realesrgan_ncnn) {
-            deviceNote = 'No AI upscaler available — Lanczos only.';
+            var installState = (caps.ncnn_install_status || {}).state;
+            if (installState === 'skipped') {
+                deviceNote = 'Headless server — no Vulkan GPU. Lanczos only. '
+                    + 'Install Real-ESRGAN PyTorch for AI quality on CPU.';
+            } else {
+                deviceNote = 'No AI upscaler available — Lanczos only.';
+            }
         }
 
         var _this = this;
@@ -126,16 +132,22 @@ class Image_upscale_class {
     }
 
     /**
-     * Poll install-status until done/failed, showing a progress bar notification.
+     * Poll install-status until done/failed/skipped, showing a progress bar.
+     * On headless machines the server sets state=skipped immediately — no wait.
      */
     async _waitForInstall(caps) {
         var installStatus = caps.ncnn_install_status || {};
-        if (installStatus.state === 'done' || installStatus.state === 'failed') {
+        var terminalStates = ['done', 'failed', 'skipped'];
+        if (terminalStates.includes(installStatus.state)) {
+            if (installStatus.state === 'skipped') {
+                // Headless — just proceed, dialog will show Lanczos or PyTorch CPU
+                alertify.message(installStatus.message || 'No Vulkan GPU — using CPU upscaler.', 4);
+            }
             return;
         }
 
         return new Promise((resolve) => {
-            var msg = alertify.message(
+            alertify.message(
                 `<div>Installing Real-ESRGAN AI upscaler…<br>
                 <progress id="esrgan-install-progress" value="0" max="100"
                   style="width:100%;margin-top:6px;"></progress>
@@ -158,7 +170,12 @@ class Image_upscale_class {
                     if (s.state === 'done') {
                         clearInterval(poll);
                         alertify.dismissAll();
-                        alertify.success('Real-ESRGAN NCNN installed ✓');
+                        alertify.success('Real-ESRGAN NCNN installed.');
+                        resolve();
+                    } else if (s.state === 'skipped') {
+                        clearInterval(poll);
+                        alertify.dismissAll();
+                        alertify.message(s.message || 'No Vulkan GPU — using CPU upscaler.', 4);
                         resolve();
                     } else if (s.state === 'failed') {
                         clearInterval(poll);
