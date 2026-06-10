@@ -8,6 +8,8 @@ import canvasToBlob from './../../../../node_modules/blueimp-canvas-to-blob/js/c
 import filesaver from './../../../../node_modules/file-saver/dist/FileSaver.min.js';
 import GIF from './../../../../node_modules/gif.js.optimized/';
 import CanvasToTIFF from './../../libs/canvastotiff.js';
+import TiffWriter from './../../libs/tiff-writer.js';
+import PdfWriter from './../../libs/pdf-writer.js';
 import Tools_settings_class from "../tools/settings";
 
 var instance = null;
@@ -42,7 +44,11 @@ class File_save_class {
 			WEBP: "Weppy File Format",
 			GIF: "Graphics Interchange Format",
 			BMP: "Windows Bitmap",
-			TIFF: "Tag Image File Format",
+			TIFF: "TIFF (RGBA)",
+			TIFF_CMYK: "TIFF (CMYK, print)",
+			TIFF_LAYERS: "TIFF (Multilayer)",
+			PDF: "PDF Document (RGB)",
+			PDF_CMYK: "PDF Document (CMYK, print)",
 		};
 
 		this.default_extension = 'PNG';
@@ -154,7 +160,12 @@ class File_save_class {
 				_this.save_dialog_onchange(true);
 			},
 			on_finish: function (params) {
-				if (params.layers == 'Separated' || params.layers == 'Separated (original types)') {
+				// These types handle their own layering internally — skip the separated loop.
+				var _type = params.type ? params.type.split(' ')[0] : '';
+				var _multilayerType = _type === 'TIFF_LAYERS' || _type === 'TIFF_CMYK'
+				                   || _type === 'PDF' || _type === 'PDF_CMYK';
+
+				if (!_multilayerType && (params.layers == 'Separated' || params.layers == 'Separated (original types)')) {
 					var active_layer = config.layer.id;
 					var original_layer_type = params.layers;
 
@@ -277,7 +288,7 @@ class File_save_class {
 		else
 			document.getElementById('popup-tr-delay').style.display = 'none';
 
-		if (type == 'JSON' || type == 'GIF')
+		if (type == 'JSON' || type == 'GIF' || type == 'TIFF_LAYERS' || type == 'TIFF_CMYK' || type == 'PDF_CMYK')
 			document.getElementById('popup-tr-layers').style.display = 'none';
 		else
 			document.getElementById('popup-tr-layers').style.display = '';
@@ -414,12 +425,16 @@ class File_save_class {
 			}, data_header);
 		}
 		else if (type == 'TIFF') {
-			//tiff
-			var data_header = "image/tiff";
-
 			CanvasToTIFF.toBlob(canvas, function(blob) {
 				_this.update_file_size(blob.size);
-			}, data_header);
+			}, {});
+		}
+		else if (type == 'TIFF_CMYK' || type == 'TIFF_LAYERS') {
+			// size estimate: W*H*4 bytes of pixel data + small overhead
+			_this.update_file_size(config.WIDTH * config.HEIGHT * 4 + 512);
+		}
+		else if (type == 'PDF' || type == 'PDF_CMYK') {
+			_this.update_file_size('-');
 		}
 		else if (type == 'JSON') {
 			//json
@@ -493,8 +508,8 @@ class File_save_class {
 			}
 		}
 
-		if (type != 'JSON' && (type == 'JPG' || config.TRANSPARENCY == false)) {
-			//add white background
+		// CMYK and JPG need an opaque white background (no alpha channel in output)
+		if (type != 'JSON' && (type == 'JPG' || type == 'TIFF_CMYK' || config.TRANSPARENCY == false)) {
 			ctx.globalCompositeOperation = 'destination-over';
 			this.fillCanvasBackground(ctx, '#ffffff');
 			ctx.globalCompositeOperation = 'source-over';
@@ -568,14 +583,61 @@ class File_save_class {
 			}, data_header);
 		}
 		else if (type == 'TIFF') {
-			//tiff
+			//tiff - single page RGBA (existing behaviour)
 			if (this.Helper.strpos(fname, '.tiff') == false)
 				fname = fname + ".tiff";
-			var data_header = "image/tiff";
 
 			CanvasToTIFF.toBlob(canvas, function(blob) {
 				filesaver.saveAs(blob, fname);
-			}, data_header);
+			}, {});
+		}
+		else if (type == 'TIFF_CMYK') {
+			//tiff - single page CMYK, print-ready
+			if (this.Helper.strpos(fname, '.tiff') == false)
+				fname = fname + ".tiff";
+			var resolution = this.Tools_settings.get_setting('resolution') || 300;
+
+			TiffWriter.toCMYK(canvas, function(buf) {
+				filesaver.saveAs(new Blob([buf], {type: 'image/tiff'}), fname);
+			}, {dpi: resolution});
+		}
+		else if (type == 'TIFF_LAYERS') {
+			//tiff - multipage: one IFD per visible layer
+			if (this.Helper.strpos(fname, '.tiff') == false)
+				fname = fname + ".tiff";
+			var resolution = this.Tools_settings.get_setting('resolution') || 300;
+			var layerCanvases = this._collect_layer_canvases();
+
+			TiffWriter.toMultipageRGBA(layerCanvases, function(buf) {
+				filesaver.saveAs(new Blob([buf], {type: 'image/tiff'}), fname);
+			}, {dpi: resolution});
+		}
+		else if (type == 'PDF') {
+			//pdf - RGB, one page per visible layer
+			if (this.Helper.strpos(fname, '.pdf') == false)
+				fname = fname + ".pdf";
+			var resolution = this.Tools_settings.get_setting('resolution') || 300;
+			var quality_val = quality;
+
+			var pdfCanvases;
+			if (user_response.layers == 'Selected') {
+				pdfCanvases = [canvas];
+			} else {
+				pdfCanvases = this._collect_layer_canvases();
+			}
+
+			PdfWriter.fromCanvases(pdfCanvases, {colorMode: 'rgb', quality: quality_val, dpi: resolution})
+				.then(function(blob) { filesaver.saveAs(blob, fname); });
+		}
+		else if (type == 'PDF_CMYK') {
+			//pdf - CMYK, one page per visible layer, print-ready
+			if (this.Helper.strpos(fname, '.pdf') == false)
+				fname = fname + ".pdf";
+			var resolution = this.Tools_settings.get_setting('resolution') || 300;
+			var layerCanvases = this._collect_layer_canvases();
+
+			PdfWriter.fromCanvases(layerCanvases, {colorMode: 'cmyk', dpi: resolution})
+				.then(function(blob) { filesaver.saveAs(blob, fname); });
 		}
 		else if (type == 'JSON') {
 			//json - full data with layers
@@ -720,8 +782,37 @@ class File_save_class {
 	}
 	
 	/**
+	 * Returns one canvas per visible layer, each composited individually.
+	 * Used for multilayer TIFF and multipage PDF export.
+	 */
+	_collect_layer_canvases() {
+		var canvases = [];
+		for (var i = 0; i < config.layers.length; i++) {
+			if (config.layers[i].visible == false) continue;
+			var c  = document.createElement('canvas');
+			var cx = c.getContext('2d');
+			c.width  = config.WIDTH;
+			c.height = config.HEIGHT;
+			this.disable_canvas_smooth(cx);
+			this.Base_layers.convert_layers_to_canvas(cx, config.layers[i].id, false);
+			canvases.push(c);
+		}
+		// Fall back to full composite if no layers found
+		if (canvases.length === 0) {
+			var c  = document.createElement('canvas');
+			var cx = c.getContext('2d');
+			c.width  = config.WIDTH;
+			c.height = config.HEIGHT;
+			this.disable_canvas_smooth(cx);
+			this.Base_layers.convert_layers_to_canvas(cx, null, false);
+			canvases.push(c);
+		}
+		return canvases;
+	}
+
+	/**
 	 * removes smoothing, because it look ugly during zoom
-	 * 
+	 *
 	 * @param {ctx} ctx
 	 */
 	disable_canvas_smooth(ctx) {
