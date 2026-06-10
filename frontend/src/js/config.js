@@ -105,25 +105,8 @@ config.TOOLS = [
 		attributes: {},
 	},
 	{
-		name: 'ai_inpaint',
-		title: 'AI Inpaint',
-		on_activate: 'on_activate',
-		attributes: {},
-	},
-	{
-		name: 'ai_lama_erase',
-		title: 'AI Magic Erase (LaMa) - Paint over to erase',
-		attributes: {
-			size: {
-				value: 30,
-				min: 5,
-				max: 200,
-			},
-		},
-	},
-	{
-		name: 'ai_smart_inpaint',
-		title: 'AI Smart Inpaint - Paint + describe replacement',
+		name: 'ai_edit',
+		title: 'AI Edit — paint mask, then Erase / Replace / Upscale / Expand',
 		on_activate: 'on_activate',
 		attributes: {
 			size: {
@@ -132,12 +115,6 @@ config.TOOLS = [
 				max: 200,
 			},
 		},
-	},
-	{
-		name: 'ai_replace_selection',
-		title: 'AI Replace Selection - Use any selection tool first',
-		on_activate: 'on_activate',
-		attributes: {},
 	},
 	{
 		name: 'magic_wand',

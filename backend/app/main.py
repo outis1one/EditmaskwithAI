@@ -21,6 +21,9 @@ async def lifespan(app: FastAPI):
     caps = probe_upscale_capabilities()
     if not caps["realesrgan_pytorch"] and not caps["realesrgan_ncnn"]:
         asyncio.create_task(ensure_ncnn_installed())
+    # Pre-download SAM model in background so first click is fast
+    from app.services.sam_service import ensure_sam_installed
+    asyncio.create_task(ensure_sam_installed())
     yield
 
 

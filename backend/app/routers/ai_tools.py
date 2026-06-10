@@ -348,3 +348,63 @@ async def get_config():
             },
         }
     }
+
+
+# ─── SAM (Segment Anything) ──────────────────────────────────────────────────
+
+class SegmentPointRequest(BaseModel):
+    image: str                          # base64 PNG/JPEG
+    points: list[list[int]]             # [[x, y], ...]  original image coords
+    labels: list[int]                   # 1=include, 0=exclude — same length as points
+
+
+@router.post("/segment/point")
+async def segment_point(req: SegmentPointRequest):
+    """
+    Run SAM point-prompt segmentation.
+    Returns a binary mask PNG (white = selected area).
+    Auto-downloads the SAM ViT-B model (~375 MB) on first call.
+    """
+    if not req.points:
+        raise HTTPException(status_code=400, detail="At least one point required.")
+    if len(req.points) != len(req.labels):
+        raise HTTPException(status_code=400, detail="points and labels must have the same length.")
+
+    try:
+        image_bytes = base64.b64decode(req.image)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not decode image: {e}")
+
+    from app.services.sam_service import predict_points, get_install_status
+    try:
+        mask_bytes = await predict_points(
+            image_bytes,
+            [tuple(p) for p in req.points],
+            req.labels,
+        )
+        return {
+            "mask": base64.b64encode(mask_bytes).decode(),
+            "sam_install": get_install_status(),
+        }
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/segment/install-status")
+def segment_install_status():
+    """Poll SAM model download progress."""
+    from app.services.sam_service import get_install_status, sam_model_available
+    status = get_install_status()
+    status["model_ready"] = sam_model_available()
+    return status
+
+
+@router.post("/segment/install")
+async def segment_install():
+    """Trigger SAM model download explicitly (also auto-triggered on first /segment/point call)."""
+    from app.services.sam_service import ensure_sam_installed, get_install_status
+    asyncio.create_task(ensure_sam_installed())
+    return get_install_status()
