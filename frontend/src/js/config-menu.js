@@ -141,6 +141,11 @@ const menuDefinition = [
 				target: 'edit/redo.redo'
 			},
 			{
+				name: 'History Panel',
+				shortcut: 'Ctrl+H',
+				target: 'edit/history_panel.toggle'
+			},
+			{
 				divider: true
 			},
 			{
@@ -326,6 +331,15 @@ const menuDefinition = [
 				divider: true
 			},
 			{
+				name: 'Auto-Enhance',
+				ellipsis: true,
+				target: 'image/auto_enhance.auto_enhance'
+			},
+			{
+				name: 'Extract Color Palette',
+				target: 'image/color_palette.color_palette'
+			},
+			{
 				name: 'Remove Background (AI)',
 				ellipsis: true,
 				target: 'image/remove_background.remove_background'
@@ -401,6 +415,10 @@ const menuDefinition = [
 				name: 'Scale Layer',
 				ellipsis: true,
 				target: 'layer/scale.scale'
+			},
+			{
+				name: 'Align to Canvas',
+				target: 'layer/align.align'
 			},
 			{
 				divider: true
@@ -840,6 +858,14 @@ const menuDefinition = [
 	{
 		name: 'Generate',
 		children: [
+			{
+				name: 'Add Text',
+				ellipsis: true,
+				target: 'text/text_presets.add_preset'
+			},
+			{
+				divider: true
+			},
 			{
 				name: 'Text → Image',
 				ellipsis: true,
