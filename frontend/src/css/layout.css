@@ -324,6 +324,7 @@ IMPORTANT: any new icon should also must be added on /service-worker.js + its ve
 .sidebar_left .smart_select:after{ background-image: url('images/icons/smart_select.svg'); }
 .sidebar_left .brush_select:after{ background-image: url('images/icons/brush_select.svg'); }
 .sidebar_left .ai_inpaint:after{ background-image: url('images/icons/ai_inpaint.svg'); }
+.sidebar_left .ai_edit:after{ background-image: url('images/icons/ai_edit.svg'); }
 .sidebar_left .magic_wand:after{ background-image: url('images/icons/magic_wand.svg'); }
 .sidebar_left .lasso:after{ background-image: url('images/icons/lasso.svg'); }
 .sidebar_left .ellipse_select:after{ background-image: url('images/icons/ellipse_select.svg'); }
