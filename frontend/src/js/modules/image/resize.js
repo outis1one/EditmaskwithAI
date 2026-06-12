@@ -30,6 +30,7 @@ class Image_resize_class {
 		this.Tools_settings = new Tools_settings_class();
 		this.pica = Pica();
 		this.Helper = new Helper_class();
+		this._lastUnits = 'pixels';
 
 		this.set_events();
 	}
@@ -50,25 +51,31 @@ class Image_resize_class {
 
 	resize() {
 		var _this = this;
-		var units = this.Tools_settings.get_setting('default_units');
+		var savedUnits = this.Tools_settings.get_setting('default_units');
 		var resolution = this.Tools_settings.get_setting('resolution');
 
-		//convert units
-		var width = this.Helper.get_user_unit(config.WIDTH, units, resolution);
-		var height = this.Helper.get_user_unit(config.HEIGHT, units, resolution);
+		var displayUnits = (savedUnits === 'inches') ? 'inches' : 'pixels';
+		this._lastUnits = displayUnits;
+
+		var width = this.Helper.get_user_unit(config.WIDTH, displayUnits, resolution);
+		var height = this.Helper.get_user_unit(config.HEIGHT, displayUnits, resolution);
 
 		var settings = {
 			title: 'Resize',
 			params: [
-				{name: "width", title: "Width:", value: '', placeholder: width, comment: units},
-				{name: "height", title: "Height:", value: '', placeholder: height, comment: units},
+				{name: "units", title: "Units:", value: displayUnits, values: ["pixels", "inches"]},
+				{name: "width", title: "Width:", value: '', placeholder: width, comment: displayUnits},
+				{name: "height", title: "Height:", value: '', placeholder: height, comment: displayUnits},
 				{name: "width_percent", title: "Width (%):", value: '', placeholder: 100, comment: "%"},
 				{name: "height_percent", title: "Height (%):", value: '', placeholder: 100, comment: "%"},
 				{name: "mode", title: "Mode:", values: ["Lanczos", "Hermite", "Basic"]},
-
+				{name: "crop_to_fill", title: "Crop to fill:", value: false},
 				{name: "sharpen", title: "Sharpen:", value: false},
 				{name: "layers", title: "Layers:", values: ["All", "Active"], value: "All"},
 			],
+			on_change: function(params) {
+				_this.units_change_handler(params);
+			},
 			on_finish: function (params) {
 				_this.do_resize(params);
 			},
@@ -78,16 +85,61 @@ class Image_resize_class {
 		document.getElementById("pop_data_width").select();
 	}
 
+	/**
+	 * Called on any dialog field change; reacts only when the units radio switches.
+	 * Updates width/height placeholders and labels, and persists the choice globally.
+	 */
+	units_change_handler(params) {
+		var units = params.units;
+		if (units === this._lastUnits) return;
+
+		this._lastUnits = units;
+		var resolution = this.Tools_settings.get_setting('resolution');
+
+		// Persist so Canvas Size and other dialogs open with the same units
+		this.Tools_settings.save_setting('default_units', units);
+
+		var newWidth = this.Helper.get_user_unit(config.WIDTH, units, resolution);
+		var newHeight = this.Helper.get_user_unit(config.HEIGHT, units, resolution);
+
+		var widthInput = document.getElementById('pop_data_width');
+		var heightInput = document.getElementById('pop_data_height');
+		if (widthInput) {
+			widthInput.placeholder = newWidth;
+			widthInput.value = '';
+		}
+		if (heightInput) {
+			heightInput.placeholder = newHeight;
+			heightInput.value = '';
+		}
+
+		var wComment = widthInput ? widthInput.nextElementSibling : null;
+		var hComment = heightInput ? heightInput.nextElementSibling : null;
+		if (wComment && wComment.classList.contains('field_comment')) wComment.textContent = units;
+		if (hComment && hComment.classList.contains('field_comment')) hComment.textContent = units;
+	}
+
 	async do_resize(params) {
 		//validate
 		if (isNaN(params.width) && isNaN(params.height) && isNaN(params.width_percent) && isNaN(params.height_percent)) {
 			alertify.error('Missing at least 1 size parameter.');
 			return false;
 		}
-		
+
+		// Crop-to-fill: scale to cover then center-crop; requires both dimensions
+		if (params.crop_to_fill == true) {
+			if (isNaN(params.width) || isNaN(params.height)) {
+				alertify.error('Crop to fill requires both Width and Height.');
+				return false;
+			}
+			if (params.layers == 'All') {
+				return this.do_resize_crop_fill(params);
+			}
+		}
+
 		// Build a list of actions to execute for resize
 		let actions = [];
-		
+
 		if (params.layers == 'All') {
 			//resize all layers
 			var skips = 0;
@@ -113,14 +165,108 @@ class Image_resize_class {
 	}
 
 	/**
+	 * Resize all image layers using cover-scale then center-crop so the subject
+	 * looks the same regardless of target aspect ratio (no stretching).
+	 */
+	async do_resize_crop_fill(params) {
+		var units = params.units || this.Tools_settings.get_setting('default_units');
+		var resolution = this.Tools_settings.get_setting('resolution');
+
+		var targetWidth = this.Helper.get_internal_unit(parseFloat(params.width), units, resolution);
+		var targetHeight = this.Helper.get_internal_unit(parseFloat(params.height), units, resolution);
+		targetWidth = parseInt(targetWidth);
+		targetHeight = parseInt(targetHeight);
+
+		if (!targetWidth || !targetHeight || targetWidth < 1 || targetHeight < 1) {
+			alertify.error('Invalid dimensions for crop to fill.');
+			return;
+		}
+
+		var srcWidth = config.WIDTH;
+		var srcHeight = config.HEIGHT;
+
+		// Cover scale: image fills target, excess is cropped from center
+		var scale = Math.max(targetWidth / srcWidth, targetHeight / srcHeight);
+		var scaledW = Math.round(srcWidth * scale);
+		var scaledH = Math.round(srcHeight * scale);
+		var cropX = Math.round((scaledW - targetWidth) / 2);
+		var cropY = Math.round((scaledH - targetHeight) / 2);
+
+		var mode = params.mode;
+		var sharpen = params.sharpen;
+		let actions = [];
+
+		for (var i in config.layers) {
+			var layer = config.layers[i];
+			if (layer.type !== 'image') continue;
+			if (layer.width == null || layer.height == null) continue;
+
+			var canvas = this.Base_layers.convert_layer_to_canvas(layer.id, true, false);
+			var newLayerW = Math.round(layer.width * scale);
+			var newLayerH = Math.round(layer.height * scale);
+
+			var useMode = mode;
+			if (useMode == "Hermite" && (newLayerW > canvas.width || newLayerH > canvas.height)) {
+				useMode = "Lanczos";
+			}
+
+			var tmp = document.createElement('canvas');
+			tmp.width = newLayerW;
+			tmp.height = newLayerH;
+
+			if (useMode == "Lanczos") {
+				await this.pica.resize(canvas, tmp, {alpha: true});
+			} else if (useMode == "Hermite") {
+				tmp.getContext('2d').drawImage(canvas, 0, 0);
+				this.Hermite.resample_single(tmp, newLayerW, newLayerH, true);
+			} else {
+				tmp.getContext('2d').drawImage(canvas, 0, 0, newLayerW, newLayerH);
+			}
+
+			if (sharpen == true) {
+				var ctx = tmp.getContext('2d');
+				var imageData = ctx.getImageData(0, 0, tmp.width, tmp.height);
+				ctx.putImageData(this.ImageFilters.Sharpen(imageData, 1), 0, 0);
+			}
+
+			var newX = Math.round(layer.x * scale) - cropX;
+			var newY = Math.round(layer.y * scale) - cropY;
+
+			actions.push(new app.Actions.Update_layer_image_action(tmp, layer.id));
+			actions.push(new app.Actions.Update_layer_action(layer.id, {
+				x: newX,
+				y: newY,
+				width: newLayerW,
+				height: newLayerH,
+				width_original: newLayerW,
+				height_original: newLayerH,
+			}));
+		}
+
+		// Update canvas dimensions to exact target
+		actions = actions.concat([
+			new app.Actions.Prepare_canvas_action('undo'),
+			new app.Actions.Update_config_action({
+				WIDTH: targetWidth,
+				HEIGHT: targetHeight,
+			}),
+			new app.Actions.Prepare_canvas_action('do'),
+		]);
+
+		return app.State.do_action(
+			new app.Actions.Bundle_action('resize_layers', 'Resize Layers', actions)
+		);
+	}
+
+	/**
 	 * Generates actions that will resize layer (image, text, vector), returns a promise that rejects on failure.
-	 * 
+	 *
 	 * @param {object} layer
 	 * @param {object} params
 	 * @returns {Promise<object>} Returns array of actions to perform
 	 */
 	async resize_layer(layer, params) {
-		var units = this.Tools_settings.get_setting('default_units');
+		var units = params.units || this.Tools_settings.get_setting('default_units');
 		var resolution = this.Tools_settings.get_setting('resolution');
 		var mode = params.mode;
 		var width = parseFloat(params.width);
@@ -168,7 +314,7 @@ class Image_resize_class {
 		let new_y = params.layers == 'All' ? Math.round(layer.y * height / config.HEIGHT) : layer.y;
 		let xratio = width / config.WIDTH;
 		let yratio = height / config.HEIGHT;
-		
+
 		//is text
 		if (layer.type == 'text') {
 			let data = JSON.parse(JSON.stringify(layer.data));
@@ -183,7 +329,7 @@ class Image_resize_class {
 			// Return actions
 			return [
 				new app.Actions.Update_layer_action(layer.id, {
-					x: new_x, 
+					x: new_x,
 					y: new_y,
 					data,
 					width: layer.width * xratio,
@@ -191,27 +337,27 @@ class Image_resize_class {
 				})
 			];
 		}
-		
+
 		//is vector
 		else if (layer.is_vector == true && layer.width != null && layer.height != null) {
 			// Return actions
 			return [
 				new app.Actions.Update_layer_action(layer.id, {
-					x: new_x, 
+					x: new_x,
 					y: new_y,
 					width: layer.width * xratio,
 					height: layer.height * yratio
 				})
 			];
 		}
-		
+
 		//only images supported at this point
 		else if (layer.type != 'image') {
 			//error - no support
 			alertify.error('Layer must be vector or image (convert it to raster).');
 			throw new Error('Layer is not compatible with resize');
 		}
-		
+
 		//get canvas from layer
 		var canvas = this.Base_layers.convert_layer_to_canvas(layer.id, true, false);
 		var ctx = canvas.getContext("2d");
@@ -221,15 +367,15 @@ class Image_resize_class {
 			alertify.warning('Scaling up is not supported in Hermite, using Lanczos.');
 			mode = "Lanczos";
 		}
-		
+
 		//resize
 		if (mode == "Lanczos") {
 			//Pica resize with max quality
-			
+
 			var tmp_data = document.createElement("canvas");
 			tmp_data.width = width;
 			tmp_data.height = height;
-			
+
 			await this.pica.resize(canvas, tmp_data, {
 				alpha: true,
 			})
@@ -250,11 +396,11 @@ class Image_resize_class {
 			tmp_data.width = canvas.width;
 			tmp_data.height = canvas.height;
 			tmp_data.getContext("2d").drawImage(canvas, 0, 0);
-			
+
 			ctx.clearRect(0, 0, canvas.width, canvas.height);
 			canvas.width = width;
 			canvas.height = height;
-			
+
 			ctx.drawImage(tmp_data, 0, 0, width, height);
 		}
 
@@ -268,7 +414,7 @@ class Image_resize_class {
 		return [
 			new app.Actions.Update_layer_image_action(canvas, layer.id),
 			new app.Actions.Update_layer_action(layer.id, {
-				x: new_x, 
+				x: new_x,
 				y: new_y,
 				width: canvas.width,
 				height: canvas.height,
@@ -277,9 +423,9 @@ class Image_resize_class {
 			})
 		];
 	}
-	
+
 	resize_gui(params) {
-		var units = this.Tools_settings.get_setting('default_units');
+		var units = params.units || this.Tools_settings.get_setting('default_units');
 		var resolution = this.Tools_settings.get_setting('resolution');
 
 		var width = parseFloat(params.width);
