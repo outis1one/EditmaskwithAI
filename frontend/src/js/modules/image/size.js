@@ -83,7 +83,9 @@ class Image_size_class {
 		var resolution = this.Tools_settings.get_setting('resolution');
 
 		// Persist so Resize and other dialogs open with the same units
+		const unitShort = {pixels: 'px', inches: '"', centimeters: 'cm', millimetres: 'mm'};
 		this.Tools_settings.save_setting('default_units', units);
+		this.Tools_settings.save_setting('default_units_short', unitShort[units] || units);
 
 		var newWidth = this.Helper.get_user_unit(config.WIDTH, units, resolution);
 		var newHeight = this.Helper.get_user_unit(config.HEIGHT, units, resolution);
