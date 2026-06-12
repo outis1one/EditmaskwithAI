@@ -164,26 +164,41 @@ class Image_frame_fit_class {
                 resultCanvas.height = img.naturalHeight;
                 resultCanvas.getContext('2d').drawImage(img, 0, 0);
 
+                var fitW = img.naturalWidth;
+                var fitH = img.naturalHeight;
+
                 if (params.new_layer) {
                     var dataURL = img.src;
                     app.State.do_action(
                         new app.Actions.Bundle_action('frame_fit_layer', 'Fit to Frame', [
+                            new app.Actions.Prepare_canvas_action('undo'),
+                            new app.Actions.Update_config_action({
+                                WIDTH: fitW,
+                                HEIGHT: fitH,
+                            }),
                             new app.Actions.Insert_layer_action({
                                 name: `${frameKey} fit`,
                                 type: 'image',
                                 data: dataURL,
                                 x: 0, y: 0,
-                                width: img.naturalWidth,
-                                height: img.naturalHeight,
-                                width_original: img.naturalWidth,
-                                height_original: img.naturalHeight,
-                            })
+                                width: fitW,
+                                height: fitH,
+                                width_original: fitW,
+                                height_original: fitH,
+                            }),
+                            new app.Actions.Prepare_canvas_action('do'),
                         ])
                     );
                 } else {
                     app.State.do_action(
                         new app.Actions.Bundle_action('frame_fit', 'Fit to Frame', [
-                            new app.Actions.Update_layer_image_action(resultCanvas)
+                            new app.Actions.Prepare_canvas_action('undo'),
+                            new app.Actions.Update_config_action({
+                                WIDTH: fitW,
+                                HEIGHT: fitH,
+                            }),
+                            new app.Actions.Update_layer_image_action(resultCanvas),
+                            new app.Actions.Prepare_canvas_action('do'),
                         ])
                     );
                 }
