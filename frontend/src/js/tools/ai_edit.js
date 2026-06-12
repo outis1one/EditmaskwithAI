@@ -16,17 +16,18 @@
 import app from './../app.js';
 import config from './../config.js';
 import Base_layers_class from './../core/base-layers.js';
+import Base_tools_class from './../core/base-tools.js';
 import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
 
 var instance = null;
 
 const BRUSH_DEFAULT = 30;
 const OVERLAY_COLOR = 'rgba(255, 55, 55, 0.50)';
-const ERASE_COLOR   = 'rgba(0, 0, 0, 0.70)';   // brush-erase preview
 
-class Tools_ai_edit_class {
+class Tools_ai_edit_class extends Base_tools_class {
 
     constructor() {
+        super();
         if (instance) return instance;
         instance = this;
         this.Base_layers  = new Base_layers_class();
@@ -47,6 +48,10 @@ class Tools_ai_edit_class {
 
     // ── Tool lifecycle ────────────────────────────────────────────────────────
 
+    load() {
+        this.default_events();
+    }
+
     on_activate() {
         if (!config.layer || config.layer.type !== 'image') {
             alertify.error('Select an image layer first.');
@@ -66,45 +71,50 @@ class Tools_ai_edit_class {
     // ── Input routing ─────────────────────────────────────────────────────────
 
     mousedown(e) {
+        if (config.TOOL.name !== this.name) return;
+        var mouse = this.get_mouse_info(e);
+        if (!mouse.click_valid) return;
         if (!config.layer || config.layer.type !== 'image') return;
         if (this._mode === 'sam') {
-            this._handleSamClick(e);
+            this._handleSamClick(e, mouse);
         } else {
             this._painting = true;
-            this._brushPaint(e);
+            this._brushPaint(mouse);
         }
     }
 
     mousemove(e) {
-        if (this._mode !== 'sam' && this._painting) this._brushPaint(e);
+        if (config.TOOL.name !== this.name) return;
+        if (this._mode !== 'sam' && this._painting) {
+            var mouse = this.get_mouse_info(e);
+            if (mouse.is_drag) this._brushPaint(mouse);
+        }
     }
 
-    mouseup() {
+    mouseup(e) {
+        if (config.TOOL.name !== this.name) return;
         if (this._painting) {
             this._painting = false;
             if (this._hasMask) this._showActions();
         }
     }
 
-    // ── Coordinate mapping ────────────────────────────────────────────────────
+    // ── Coordinate mapping — uses miniPaint's get_mouse_info ─────────────────
+    // get_mouse_info returns { x, y } already in canvas/layer coordinates.
+    // We still need to know the display scale to size brush strokes on the overlay.
 
-    _screenToImage(e) {
-        const canvasEl = document.getElementById('canvas_minipaint') || document.querySelector('canvas');
-        if (!canvasEl) return null;
-        const rect   = canvasEl.getBoundingClientRect();
-        const scaleX = config.layer.width_original  / (config.WIDTH  * config.ZOOM);
-        const scaleY = config.layer.height_original / (config.HEIGHT * config.ZOOM);
-        const ix = ((e.clientX - rect.left) - config.layer.x * config.ZOOM) * scaleX;
-        const iy = ((e.clientY - rect.top)  - config.layer.y * config.ZOOM) * scaleY;
-        return { ix, iy, scaleX, scaleY };
+    _mouseToImage(mouse) {
+        // mouse.x/y are already in original image coords from get_mouse_info
+        const scaleX = (config.WIDTH  * config.ZOOM) / config.layer.width_original;
+        const scaleY = (config.HEIGHT * config.ZOOM) / config.layer.height_original;
+        return { ix: mouse.x, iy: mouse.y, scaleX, scaleY };
     }
 
     // ── SAM click selection ───────────────────────────────────────────────────
 
-    async _handleSamClick(e) {
+    async _handleSamClick(e, mouse) {
         if (this._samWorking) return;
-        const coords = this._screenToImage(e);
-        if (!coords) return;
+        const coords = this._mouseToImage(mouse);
 
         const label = e.altKey ? 0 : 1;   // alt = exclude, normal = include
         const x = Math.round(coords.ix);
@@ -240,13 +250,11 @@ class Tools_ai_edit_class {
 
     // ── Brush painting ────────────────────────────────────────────────────────
 
-    _brushPaint(e) {
-        const coords = this._screenToImage(e);
-        if (!coords) return;
-        const { ix, iy, scaleX, scaleY } = coords;
+    _brushPaint(mouse) {
+        const { ix, iy, scaleX, scaleY } = this._mouseToImage(mouse);
         const r = (config.tools[this.name]?.size ?? BRUSH_DEFAULT) / 2;
 
-        // Paint on mask canvas
+        // Paint on mask canvas (image coords)
         this._maskCtx.globalCompositeOperation =
             this._mode === 'brush_sub' ? 'destination-out' : 'source-over';
         this._maskCtx.fillStyle = '#ffffff';
@@ -255,13 +263,13 @@ class Tools_ai_edit_class {
         this._maskCtx.fill();
         this._maskCtx.globalCompositeOperation = 'source-over';
 
-        // Mirror on overlay
+        // Mirror on overlay (display coords)
         const oc  = this._overlayEl;
         if (!oc) return;
         const oct = oc.getContext('2d');
-        const ox  = (ix / scaleX) + config.layer.x * config.ZOOM;
-        const oy  = (iy / scaleY) + config.layer.y * config.ZOOM;
-        const or_ = r / scaleX;
+        const ox  = ix * scaleX + config.layer.x * config.ZOOM;
+        const oy  = iy * scaleY + config.layer.y * config.ZOOM;
+        const or_ = r * scaleX;
 
         if (this._mode === 'brush_sub') {
             oct.globalCompositeOperation = 'destination-out';

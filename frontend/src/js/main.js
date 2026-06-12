@@ -58,4 +58,70 @@ window.addEventListener('load', function (e) {
 
 	// Mount provider badge in the tools panel footer
 	mountProviderBadge(document.getElementById('tools_container') || document.body);
+
+	// Collapse right-panel Colors section by default (compact color swatch on left toolbar instead)
+	_collapseColorsPanel();
+	// Mount compact foreground/background color swatches at bottom of left toolbar
+	_mountToolbarColorSwatch();
 }, false);
+
+function _collapseColorsPanel() {
+	var toggle = document.querySelector('[data-target="toggle_colors"]');
+	var panel  = document.getElementById('toggle_colors');
+	if (toggle && panel) {
+		// Only collapse if user hasn't explicitly expanded it (no saved cookie)
+		var Helper = { getCookie: (k) => { var m = document.cookie.match('(^|;)\\s*' + k + '\\s*=\\s*([^;]+)'); return m ? m.pop() : null; } };
+		if (Helper.getCookie('toggle_colors') !== '1') {
+			panel.classList.add('hidden');
+			toggle.classList.add('toggled');
+		}
+	}
+}
+
+function _mountToolbarColorSwatch() {
+	var toolbar = document.getElementById('tools_container');
+	if (!toolbar) return;
+
+	// Spacer to push swatch to bottom
+	var spacer = document.createElement('div');
+	spacer.style.cssText = 'flex:1;min-height:8px;width:100%;';
+	toolbar.appendChild(spacer);
+
+	// Foreground / background color squares (click to open full color picker)
+	var wrap = document.createElement('div');
+	wrap.id  = 'toolbar_color_swatch';
+	wrap.title = 'Foreground / Background color — click to open color picker';
+	wrap.style.cssText = 'position:relative;width:30px;height:30px;margin:4px 0 4px 5px;cursor:pointer;flex-shrink:0;';
+	wrap.innerHTML = `
+		<div id="tc_bg" style="position:absolute;right:0;bottom:0;width:20px;height:20px;
+			border:1px solid #555;background:#000;border-radius:3px;"></div>
+		<div id="tc_fg" style="position:absolute;left:0;top:0;width:20px;height:20px;
+			border:1px solid #777;background:#008000;border-radius:3px;"></div>`;
+	toolbar.appendChild(wrap);
+
+	// Keep swatch in sync with config.COLOR
+	function _syncSwatch() {
+		var fg = document.getElementById('tc_fg');
+		var bg = document.getElementById('tc_bg');
+		if (fg) fg.style.background = window.config && config.COLOR ? config.COLOR : '#008000';
+	}
+	setInterval(_syncSwatch, 250);
+
+	// Click → open the right-side color panel
+	wrap.addEventListener('click', function () {
+		var panel  = document.getElementById('toggle_colors');
+		var toggle = document.querySelector('[data-target="toggle_colors"]');
+		if (!panel) return;
+		var hidden = panel.classList.contains('hidden');
+		if (hidden) {
+			panel.classList.remove('hidden');
+			if (toggle) toggle.classList.remove('toggled');
+			// Scroll right panel to top so color picker is visible
+			var sidebar = document.querySelector('.sidebar_right');
+			if (sidebar) sidebar.scrollTop = 0;
+		} else {
+			panel.classList.add('hidden');
+			if (toggle) toggle.classList.add('toggled');
+		}
+	});
+}
