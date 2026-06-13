@@ -327,12 +327,21 @@ async def get_config():
     # Default provider for display (used when no per-op override)
     default_name = (settings.ai_provider or "").lower() or None
 
+    from app.services.gpu_detect import get_cached_gpu_info
+    gpu_info = get_cached_gpu_info()
+
     return {
         "local": {
             "lama": lama_available(),
             "rembg": rembg_available(),
             "opencv": True,
             "gpu_detected": gpu_available(),
+            "gpu_backend": gpu_info.backend,
+            "gpu_device": gpu_info.device_name,
+            "gpu_vram_gb": gpu_info.vram_gb,
+            "gpu_tier": gpu_info.tier,
+            "local_gpu_available": gpu_info.backend in ("cuda", "mps"),
+            "local_gpu_capabilities": gpu_info.capabilities,
         },
         "remote": {
             "default_provider": default_name,

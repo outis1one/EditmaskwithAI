@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     # Allow per-edit model override
     allow_model_override: bool = True
 
+    # Local GPU diffusion (AI_PROVIDER=local_gpu)
+    auto_download_models: bool = True      # download HF models on first use
+    local_gpu_max_pipelines: int = 2       # max diffusion pipelines kept in GPU memory
+    hf_token: str = ""                     # HuggingFace token (only needed for gated models)
+    # Override auto-selected models per operation (leave blank = auto-pick by VRAM tier)
+    hf_model_inpaint: str = ""
+    hf_model_txt2img: str = ""
+    hf_model_img2img: str = ""
+
     # File Storage
     data_dir: str = "./data"
     max_upload_size_mb: int = 50

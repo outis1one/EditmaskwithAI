@@ -1,0 +1,94 @@
+# =============================================================================
+# EditmaskwithAI — GPU Docker Compose (NVIDIA CUDA)
+#
+# Quick start:
+#   docker compose -f docker-compose.gpu.yml up --build
+#
+# Then open: http://localhost:3080
+#
+# What this does:
+#   • Detects your NVIDIA GPU at startup
+#   • Picks the best Stable Diffusion models for your VRAM tier
+#   • Auto-downloads models on first use (cached in a Docker volume)
+#   • Exposes local GPU generation (inpaint, outpaint, txt2img, img2img, upscale)
+#   • Still supports InvokeAI / ComfyUI / OpenAI via env vars below
+#
+# AMD ROCm: swap Dockerfile.gpu base image for a ROCm PyTorch image,
+#           remove the 'nvidia' driver line, and set device capabilities to [gpu].
+# =============================================================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: editmaskwithai-gpu
+    ports:
+      - "${PORT:-3080}:8000"
+    volumes:
+      # Persistent project data
+      - ./data:/app/data
+      # HuggingFace model cache — keeps downloaded models across rebuilds (~5-20 GB)
+      - hf_model_cache:/root/.cache/huggingface
+      # Scripts (for exec access)
+      - ./scripts:/scripts
+    environment:
+      # ── Local GPU (default for this compose) ────────────────────────────────
+      - AI_PROVIDER=${AI_PROVIDER:-local_gpu}
+      - AUTO_DOWNLOAD_MODELS=${AUTO_DOWNLOAD_MODELS:-true}
+
+      # ── Per-operation overrides (optional) ──────────────────────────────────
+      # Leave blank to use AI_PROVIDER for all operations.
+      # Example: use InvokeAI for inpaint, local GPU for everything else:
+      #   AI_PROVIDER_INPAINT=invokeai
+      - AI_PROVIDER_INPAINT=${AI_PROVIDER_INPAINT:-}
+      - AI_PROVIDER_TXT2IMG=${AI_PROVIDER_TXT2IMG:-}
+      - AI_PROVIDER_IMG2IMG=${AI_PROVIDER_IMG2IMG:-}
+      - AI_PROVIDER_OUTPAINT=${AI_PROVIDER_OUTPAINT:-}
+
+      # ── Remote/cloud providers (all optional) ────────────────────────────────
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-dall-e-3}
+      - REPLICATE_API_KEY=${REPLICATE_API_KEY:-}
+      - STABILITY_API_KEY=${STABILITY_API_KEY:-}
+
+      # ── InvokeAI / ComfyUI (running on another machine or container) ────────
+      - INVOKEAI_URL=${INVOKEAI_URL:-}
+      - INVOKEAI_DEFAULT_MODEL=${INVOKEAI_DEFAULT_MODEL:-flux-dev}
+      - COMFYUI_URL=${COMFYUI_URL:-}
+      - COMFYUI_DEFAULT_MODEL=${COMFYUI_DEFAULT_MODEL:-v1-5-pruned-emaonly.ckpt}
+
+      # ── HuggingFace model overrides (optional) ───────────────────────────────
+      # Override the auto-selected model for any operation:
+      #   HF_MODEL_INPAINT=your-org/your-model
+      - HF_MODEL_INPAINT=${HF_MODEL_INPAINT:-}
+      - HF_MODEL_TXT2IMG=${HF_MODEL_TXT2IMG:-}
+      - HF_MODEL_IMG2IMG=${HF_MODEL_IMG2IMG:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+
+      # ── App settings ─────────────────────────────────────────────────────────
+      - DATABASE_URL=sqlite:///./data/ai_photo_edit.db
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production}
+      - CORS_ORIGINS=*
+      - AUTO_DOWNLOAD_SAM=${AUTO_DOWNLOAD_SAM:-true}
+
+    # NVIDIA GPU passthrough — requires nvidia-container-toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Reliable DNS for HuggingFace Hub downloads and external API calls
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
+    restart: unless-stopped
+
+volumes:
+  hf_model_cache:
+    # Survives docker compose down; delete manually to free disk space:
+    #   docker volume rm editmaskwithai_hf_model_cache

@@ -1,0 +1,24 @@
+# =============================================================================
+# GPU / Local Diffusion dependencies
+# Install alongside requirements.txt when running with AI_PROVIDER=local_gpu
+#
+# Usage:
+#   pip install -r requirements.txt -r requirements.gpu.txt
+#
+# These are pre-installed in Dockerfile.gpu; optional in the standard image.
+# =============================================================================
+
+# HuggingFace Diffusers ecosystem
+diffusers>=0.27.0
+transformers>=4.38.0
+accelerate>=0.27.0
+huggingface-hub>=0.21.0
+safetensors>=0.4.0
+
+# Required by SDXL pipelines
+invisible-watermark>=0.2.0
+omegaconf>=2.3.0
+
+# xformers — further reduces VRAM usage on CUDA (install separately, version must
+# match your PyTorch/CUDA; leave out if unsure and use attention_slicing instead)
+# xformers
