@@ -52,7 +52,8 @@ export class SelectionActions {
             'font-family:sans-serif',
             'font-size:12px',
             'color:#d0d0e0',
-            'min-width:340px',
+            'min-width:360px',
+            'max-width:420px',
             'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
             'display:flex',
             'flex-direction:column',
@@ -61,37 +62,56 @@ export class SelectionActions {
 
         // ── Title row ────────────────────────────────────────────────────────
         var titleRow = document.createElement('div');
-        titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px';
-        var title = document.createElement('span');
-        title.textContent = 'Selection Actions';
-        title.style.cssText = 'font-size:13px;font-weight:bold;color:#aaaaff';
+        titleRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:2px';
+        var titleBlock = document.createElement('div');
+        var title = document.createElement('div');
+        title.textContent = 'Selection ready';
+        title.style.cssText = 'font-size:13px;font-weight:bold;color:#aaaaff;line-height:1.3';
+        var subtitle = document.createElement('div');
+        subtitle.textContent = 'Nothing has changed yet — choose an action below';
+        subtitle.style.cssText = 'font-size:10px;color:#7777aa;margin-top:1px';
+        titleBlock.appendChild(title);
+        titleBlock.appendChild(subtitle);
         var closeX = document.createElement('button');
         closeX.textContent = '✕';
-        closeX.style.cssText = 'background:none;border:none;color:#666;cursor:pointer;font-size:14px;padding:0;line-height:1';
-        closeX.title = 'Close panel (keep selection)';
+        closeX.style.cssText = 'background:none;border:none;color:#666;cursor:pointer;font-size:14px;padding:0 0 0 8px;line-height:1;flex-shrink:0';
+        closeX.title = 'Dismiss (keeps your selection active)';
         closeX.onclick = () => this.hide();
-        titleRow.appendChild(title);
+        titleRow.appendChild(titleBlock);
         titleRow.appendChild(closeX);
         panel.appendChild(titleRow);
 
-        // ── Scale by % ───────────────────────────────────────────────────────
+        // ── Section: AI Actions ──────────────────────────────────────────────
+        panel.appendChild(_sectionLabel('AI Actions'));
+
+        // Scale by %
+        var scaleWrap = document.createElement('div');
+        scaleWrap.style.cssText = 'background:#16213e;border-radius:7px;padding:7px 10px';
         var scaleRow = document.createElement('div');
-        scaleRow.style.cssText = 'display:flex;align-items:center;gap:6px;background:#16213e;border-radius:7px;padding:7px 10px';
+        scaleRow.style.cssText = 'display:flex;align-items:center;gap:6px';
         var scaleLabel = document.createElement('span');
-        scaleLabel.textContent = 'Scale by';
+        scaleLabel.textContent = 'Scale object by';
         scaleLabel.style.color = '#aaa';
         var scaleInput = document.createElement('input');
         scaleInput.type = 'number';
         scaleInput.value = '103';
         scaleInput.min = '1';
         scaleInput.max = '500';
-        scaleInput.title = '103 = 3% bigger · 95 = 5% smaller';
         scaleInput.style.cssText = 'width:52px;background:#0f0f1a;color:#fff;border:1px solid #4a4a8a;border-radius:4px;padding:2px 5px;font-size:12px';
         var scaleUnit = document.createElement('span');
         scaleUnit.textContent = '%';
         scaleUnit.style.color = '#888';
+        var scaleHint = document.createElement('span');
+        scaleHint.style.cssText = 'color:#6688aa;font-size:10px;margin-left:2px';
+        scaleHint.textContent = '= 3% bigger';
         var scaleBtn = _btn('Apply', '#1a2a4a', '#8aacff');
         scaleBtn.style.marginLeft = 'auto';
+        scaleInput.addEventListener('input', () => {
+            var v = parseFloat(scaleInput.value);
+            if (isNaN(v) || v === 100) scaleHint.textContent = '= no change';
+            else if (v > 100) scaleHint.textContent = '= ' + (v - 100).toFixed(0) + '% bigger';
+            else scaleHint.textContent = '= ' + (100 - v).toFixed(0) + '% smaller';
+        });
         scaleBtn.onclick = () => {
             var pct = parseFloat(scaleInput.value) || 103;
             this._scaleSelection(pct);
@@ -99,57 +119,73 @@ export class SelectionActions {
         scaleRow.appendChild(scaleLabel);
         scaleRow.appendChild(scaleInput);
         scaleRow.appendChild(scaleUnit);
+        scaleRow.appendChild(scaleHint);
         scaleRow.appendChild(scaleBtn);
-        panel.appendChild(scaleRow);
+        var scaleDesc = document.createElement('div');
+        scaleDesc.textContent = 'Moves the selected object, then AI fills the vacated area';
+        scaleDesc.style.cssText = 'color:#5566aa;font-size:10px;margin-top:4px';
+        scaleWrap.appendChild(scaleRow);
+        scaleWrap.appendChild(scaleDesc);
+        panel.appendChild(scaleWrap);
 
-        // ── AI actions ───────────────────────────────────────────────────────
-        panel.appendChild(
-            _actionBtn('Make less symmetrical', '#1c1a2e', '#cc99ff',
-                '⟳ AI redraws the region with natural, organic asymmetry',
-                () => this._makeAsymmetric())
-        );
-        panel.appendChild(
-            _actionBtn('Replace with clipboard', '#1a2a1a', '#88dd88',
-                '📋 Scales your clipboard image into the selection shape',
-                () => this._pasteFromClipboard())
-        );
+        // Make less symmetrical
+        panel.appendChild(_actionCard(
+            'Make less symmetrical',
+            '#1c1a2e', '#cc99ff',
+            'AI redraws the selection with subtle, natural imperfections',
+            () => this._makeAsymmetric()
+        ));
 
-        // ── Custom AI edit prompt ─────────────────────────────────────────────
+        // Replace with clipboard
+        panel.appendChild(_actionCard(
+            'Replace with clipboard',
+            '#1a2a1a', '#88dd88',
+            'Scales your clipboard image to fit inside the selection shape',
+            () => this._pasteFromClipboard()
+        ));
+
+        // Custom AI edit prompt
+        var aiWrap = document.createElement('div');
+        aiWrap.style.cssText = 'background:#16213e;border-radius:7px;padding:7px 10px';
         var aiRow = document.createElement('div');
-        aiRow.style.cssText = 'display:flex;align-items:center;gap:6px;background:#16213e;border-radius:7px;padding:7px 10px';
+        aiRow.style.cssText = 'display:flex;align-items:center;gap:6px';
         var aiInput = document.createElement('input');
         aiInput.type = 'text';
-        aiInput.placeholder = 'AI edit: "add a scar", "make it look aged", …';
+        aiInput.placeholder = '"add a scar", "make it look aged", "blue eyes" …';
         aiInput.style.cssText = 'flex:1;background:#0f0f1a;color:#fff;border:1px solid #4a4a8a;border-radius:4px;padding:3px 7px;font-size:11px';
-        var aiBtn = _btn('Edit', '#1a2a4a', '#8aacff');
+        var aiBtn = _btn('AI Edit', '#1a2a4a', '#8aacff');
         aiBtn.onclick = () => {
             var instruction = aiInput.value.trim();
-            if (!instruction) { alertify.warning('Enter an AI edit instruction first.'); return; }
+            if (!instruction) { alertify.warning('Enter an instruction first — describe what to change.'); return; }
             this._aiEditRegion(instruction);
         };
+        aiInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') aiBtn.click();
+        });
+        var aiDesc = document.createElement('div');
+        aiDesc.textContent = 'Inpaints the selected region according to your description';
+        aiDesc.style.cssText = 'color:#5566aa;font-size:10px;margin-top:4px';
         aiRow.appendChild(aiInput);
         aiRow.appendChild(aiBtn);
-        panel.appendChild(aiRow);
+        aiWrap.appendChild(aiRow);
+        aiWrap.appendChild(aiDesc);
+        panel.appendChild(aiWrap);
 
-        // ── Divider ──────────────────────────────────────────────────────────
-        var hr = document.createElement('div');
-        hr.style.cssText = 'border-top:1px solid #2a2a4a;margin:2px 0';
-        panel.appendChild(hr);
-
-        // ── Classic selection ops ─────────────────────────────────────────────
+        // ── Section: Classic Tools ────────────────────────────────────────────
+        panel.appendChild(_sectionLabel('Classic Tools'));
         var classicRow = document.createElement('div');
         classicRow.style.cssText = 'display:flex;gap:6px';
         var copyBtn = _btn('Copy to layer', '#1a2a1a', '#88cc88');
         copyBtn.style.flex = '1';
-        copyBtn.title = 'Ctrl+C';
+        copyBtn.title = 'Lift a copy of the selection onto a new layer (non-destructive)';
         copyBtn.onclick = () => { this.tool.copyToLayer(); this.hide(); };
         var cutBtn  = _btn('Cut to layer', '#2a1a1a', '#cc8888');
         cutBtn.style.flex = '1';
-        cutBtn.title = 'Ctrl+X';
+        cutBtn.title = 'Cut the selection to a new layer (erases from original)';
         cutBtn.onclick = () => { this.tool.cutToLayer(); this.hide(); };
         var delBtn  = _btn('Erase', '#2a1a1a', '#ff7766');
         delBtn.style.flex = '0 0 auto';
-        delBtn.title = 'Delete key';
+        delBtn.title = 'Delete the selected pixels (transparent / background color)';
         delBtn.onclick = () => { this.tool.deleteSelection(); this.hide(); };
         classicRow.appendChild(copyBtn);
         classicRow.appendChild(cutBtn);
@@ -330,12 +366,28 @@ function _btn(text, bg, color) {
     return b;
 }
 
-function _actionBtn(text, bg, color, tooltip, handler) {
-    var b = _btn(text, bg, color);
-    b.style.cssText += ';display:block;width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:12px';
-    if (tooltip) b.title = tooltip;
-    b.onclick = handler;
-    return b;
+function _actionCard(text, bg, color, description, handler) {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'background:' + bg + ';border-radius:7px;padding:7px 10px;cursor:pointer;border:1px solid transparent';
+    wrap.addEventListener('mouseenter', () => { wrap.style.borderColor = color; });
+    wrap.addEventListener('mouseleave', () => { wrap.style.borderColor = 'transparent'; });
+    wrap.onclick = handler;
+    var label = document.createElement('div');
+    label.textContent = text;
+    label.style.cssText = 'color:' + color + ';font-size:12px;font-weight:500;pointer-events:none';
+    var desc = document.createElement('div');
+    desc.textContent = description;
+    desc.style.cssText = 'color:#5566aa;font-size:10px;margin-top:3px;pointer-events:none';
+    wrap.appendChild(label);
+    wrap.appendChild(desc);
+    return wrap;
+}
+
+function _sectionLabel(text) {
+    var el = document.createElement('div');
+    el.style.cssText = 'font-size:9px;font-weight:bold;letter-spacing:0.08em;color:#555577;text-transform:uppercase;margin-top:2px';
+    el.textContent = text;
+    return el;
 }
 
 async function _post(path, body) {

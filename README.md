@@ -183,6 +183,25 @@ docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Error|Fail
 # If a private/gated model: add HF_TOKEN=hf_... to .env
 ```
 
+**SAM model fails to download (DNS error / firewall blocking port 53)**
+
+If the container can't reach `dl.fbaipublicfiles.com` (you'll see `Errno -3 Name or service not known` in the logs), download SAM directly on the host and let the bind mount make it visible to the container — no rebuild needed:
+
+```bash
+mkdir -p ./data/models
+# sudo needed if ./data/ was created by Docker (root-owned):
+sudo curl -L -o ./data/models/sam_vit_b_01ec64.pth \
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+```
+
+The file is ~375 MB. Once it exists at `./data/models/sam_vit_b_01ec64.pth`, the container picks it up on the next startup (no rebuild required). Verify with:
+```bash
+docker compose -f docker-compose.gpu.yml logs | grep -i sam
+# Should show: "SAM model loaded on cuda" (or cpu)
+```
+
+If Docker created `./data/` as root and you can't write there without `sudo`, you can also use root's curl as above — the container reads the file regardless of owner.
+
 **Out of VRAM during generation**
 - Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)
 - Or override to a smaller model: `HF_MODEL_TXT2IMG=runwayml/stable-diffusion-v1-5`
