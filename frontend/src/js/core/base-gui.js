@@ -82,8 +82,12 @@ class Base_gui_class {
 		modules_context.keys().forEach(function (key) {
 			if (key.indexOf('Base' + '/') < 0) {
 				var moduleKey = key.replace('./', '').replace('.js', '');
-				var classObj = modules_context(key);
-				_this.modules[moduleKey] = new classObj.default();
+				try {
+					var classObj = modules_context(key);
+					_this.modules[moduleKey] = new classObj.default();
+				} catch (e) {
+					console.error('[load_modules] Failed to load ' + key + ':', e);
+				}
 			}
 		});
 	}
