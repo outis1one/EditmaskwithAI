@@ -10,6 +10,7 @@ Model selection ladder (txt2img):
   eff_vram ≥ 10 GB → FLUX.1-schnell (model_cpu_offload, 2–3× slower but fits)
   eff_vram ≥ 7.5 GB → SDXL base
   eff_vram ≥ 5.5 GB → SDXL base + attention slicing
+  eff_vram ≥ 4.0 GB → SDXL + model_cpu_offload  (GTX 1060 6 GB, Quadro 6 GB)
   eff_vram ≥ 3.5 GB → Stable Diffusion 2.1
   eff_vram ≥ 2.5 GB → SD 2.1-base + attention slicing
   eff_vram ≥ 1.7 GB → Stable Diffusion 1.5
@@ -61,7 +62,7 @@ class GpuCapabilities:
     effective_vram_gb: float  # free VRAM after overhead, halved if fp32-only
 
     # Human-readable tier label
-    tier: str  # flux_full | flux_offload | sdxl | sdxl_low | sd2x | sd15 | minimal
+    tier: str  # flux_full | flux_offload | sdxl | sdxl_low | sdxl_offload | sd2x | sd2x_low | sd15 | minimal
 
     # Best model per operation
     recommended: dict[str, Optional[ModelSpec]]
@@ -200,6 +201,8 @@ def _select_txt2img(eff: float) -> ModelSpec:
         return ModelSpec("stabilityai/stable-diffusion-xl-base-1.0", "sdxl", "none",            1024, 6.5)
     if eff >= 5.5:
         return ModelSpec("stabilityai/stable-diffusion-xl-base-1.0", "sdxl", "attention_slicing", 1024, 6.5)
+    if eff >= 4.0:
+        return ModelSpec("stabilityai/stable-diffusion-xl-base-1.0", "sdxl", "model_cpu_offload", 1024, 6.5)
     # SD 2.x
     if eff >= 3.5:
         return ModelSpec("stabilityai/stable-diffusion-2-1",      "sd2x", "none",            768, 3.5)
@@ -224,6 +227,8 @@ def _select_inpaint(eff: float) -> ModelSpec:
         return ModelSpec("diffusers/stable-diffusion-xl-1.0-inpainting-0.1", "sdxl", "none",            1024, 6.5)
     if eff >= 5.5:
         return ModelSpec("diffusers/stable-diffusion-xl-1.0-inpainting-0.1", "sdxl", "attention_slicing", 1024, 6.5)
+    if eff >= 4.0:
+        return ModelSpec("diffusers/stable-diffusion-xl-1.0-inpainting-0.1", "sdxl", "model_cpu_offload", 1024, 6.5)
     if eff >= 3.5:
         return ModelSpec("stabilityai/stable-diffusion-2-inpainting",        "sd2x", "none",            512,  3.5)
     if eff >= 2.5:
@@ -248,6 +253,7 @@ def _tier_label(eff_vram: float) -> str:
     if eff_vram >= 10:    return "flux_offload"
     if eff_vram >= 7.5:   return "sdxl"
     if eff_vram >= 5.5:   return "sdxl_low"
+    if eff_vram >= 4.0:   return "sdxl_offload"
     if eff_vram >= 3.5:   return "sd2x"
     if eff_vram >= 2.5:   return "sd2x_low"
     if eff_vram >= 1.7:   return "sd15"
@@ -256,7 +262,7 @@ def _tier_label(eff_vram: float) -> str:
 
 def _caps(tier: str) -> list[str]:
     base = ["txt2img", "inpaint", "img2img", "outpaint"]
-    if tier in ("flux_full", "flux_offload", "sdxl", "sdxl_low"):
+    if tier in ("flux_full", "flux_offload", "sdxl", "sdxl_low", "sdxl_offload"):
         return base + ["upscale_diffusion"]
     return base
 
@@ -297,6 +303,12 @@ def _build_warnings(
             f"Very low effective VRAM ({vram_free:.1f} GB free). "
             "Sequential CPU offload will be used — expect 10–30 min per image."
         )
+    elif tier == "sdxl_offload":
+        w.append(
+            f"Limited VRAM ({vram_free:.1f} GB free). "
+            "Using SDXL with model_cpu_offload — better quality than SD 2.x, ~30% slower. "
+            "Install xformers or upgrade to ≥5.5 GB effective VRAM for full-speed SDXL."
+        )
     elif tier in ("sd15", "sd2x_low"):
         w.append(
             f"Limited VRAM ({vram_free:.1f} GB free). "
@@ -309,7 +321,7 @@ def _build_warnings(
             "You may be able to run a higher-tier model than listed."
         )
     else:
-        if tier in ("sdxl_low", "sd2x"):
+        if tier in ("sdxl_low", "sdxl_offload", "sd2x"):
             w.append(
                 "xformers not installed. Install it (pip install xformers) to reduce "
                 "VRAM usage ~20-30% and potentially unlock the next model tier."
