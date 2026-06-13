@@ -428,6 +428,13 @@ def _build_provider(name: str) -> Optional[RemoteAIProvider]:
             return None
         return ComfyUIProvider(settings.comfyui_url, settings.comfyui_default_model)
 
+    if name == "local_gpu":
+        try:
+            from app.services.local_diffusion import get_local_diffusion_provider
+            return get_local_diffusion_provider(max_pipelines=settings.local_gpu_max_pipelines)
+        except ImportError:
+            return None
+
     return None
 
 

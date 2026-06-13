@@ -345,6 +345,11 @@ const menuDefinition = [
 				target: 'image/remove_background.remove_background'
 			},
 			{
+				name: 'Prepare for Print...',
+				ellipsis: true,
+				target: 'image/print_prepare.print_prepare'
+			},
+			{
 				name: 'Fit to Frame...',
 				ellipsis: true,
 				target: 'image/frame_fit.frame_fit'

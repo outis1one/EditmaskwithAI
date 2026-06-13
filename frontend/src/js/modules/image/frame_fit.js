@@ -15,11 +15,12 @@ import Base_layers_class from './../../core/base-layers.js';
 import Dialog_class from './../../libs/popup.js';
 import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.js';
 import { getCapabilities } from './../../api/capabilities.js';
+import { showProgress, hideProgress } from './../../libs/progress_overlay.js';
 
 var instance = null;
 
 const FRAME_SIZES = [
-    '4x6', '5x7', '8x10', '11x14', '16x20', '20x24', '24x36',
+    '4x6', '5x7', '8x10', '11x14', '16x20', '18x24', '20x24', '24x36',
     '4x4', '8x8', '12x12',
 ];
 
@@ -27,8 +28,8 @@ const FRAME_SIZES = [
 const FRAME_PX = {
     '4x6':   [1200, 1800], '5x7':   [1500, 2100],
     '8x10':  [2400, 3000], '11x14': [3300, 4200],
-    '16x20': [4800, 6000], '20x24': [6000, 7200],
-    '24x36': [7200, 10800],
+    '16x20': [4800, 6000], '18x24': [5400, 7200],
+    '20x24': [6000, 7200], '24x36': [7200, 10800],
     '4x4':   [1200, 1200], '8x8': [2400, 2400], '12x12': [3600, 3600],
 };
 
@@ -96,7 +97,7 @@ class Image_frame_fit_class {
                     name: 'dpi',
                     title: 'Output DPI:',
                     value: '300',
-                    values: ['72', '150', '300'],
+                    values: ['72', '150', '200', '300'],
                     type: 'select',
                 },
                 {
@@ -123,11 +124,11 @@ class Image_frame_fit_class {
         this.isProcessing = true;
 
         var mode = params.mode || 'smart';
-        alertify.message(
+        showProgress(
             mode === 'extend'
-                ? 'Fitting to frame with AI extension... please wait'
-                : 'Fitting to frame...',
-            0
+                ? 'Fitting to frame with AI extension…'
+                : 'Fitting to frame…',
+            mode === 'extend' ? 45 : 5
         );
 
         try {
@@ -203,7 +204,7 @@ class Image_frame_fit_class {
                     );
                 }
 
-                alertify.dismissAll();
+                hideProgress();
                 alertify.success(
                     `Done! ${result.output_pixels.width}×${result.output_pixels.height}px` +
                     ` (${result.frame} ${result.orientation}, ${result.mode_used})`
@@ -211,14 +212,14 @@ class Image_frame_fit_class {
                 this.isProcessing = false;
             };
             img.onerror = () => {
-                alertify.dismissAll();
+                hideProgress();
                 alertify.error('Failed to load result.');
                 this.isProcessing = false;
             };
             img.src = 'data:image/png;base64,' + result.result;
 
         } catch (err) {
-            alertify.dismissAll();
+            hideProgress();
             alertify.error('Frame fit failed: ' + (err.message || err));
             this.isProcessing = false;
         }

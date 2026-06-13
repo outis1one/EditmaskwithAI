@@ -214,6 +214,21 @@ class ApiService {
     }
 
     /**
+     * Fetch GPU status: hardware, feature flags, and selected models per operation.
+     * Only meaningful when AI_PROVIDER=local_gpu.
+     * @returns {Promise<Object|null>}
+     */
+    async getGpuStatus() {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/gpu/status`);
+            if (!response.ok) return null;
+            return response.json();
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Health check for the backend
      * @returns {Promise<boolean>}
      */

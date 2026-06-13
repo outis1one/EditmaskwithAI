@@ -10,6 +10,7 @@ import os
 from app.config import settings
 from app.database import init_db
 from app.routers import projects, edits, images, patches, generate, tools, ai_tools, print_tools
+from app.routers import gpu_status
 
 
 @asynccontextmanager
@@ -24,6 +25,33 @@ async def lifespan(app: FastAPI):
     # Pre-download SAM model in background so first click is fast
     from app.services.sam_service import ensure_sam_installed
     asyncio.create_task(ensure_sam_installed())
+
+    # If local GPU provider is active, log GPU info at startup
+    if settings.ai_provider.lower() == "local_gpu" or any(
+        v.lower() == "local_gpu"
+        for v in [
+            settings.ai_provider_inpaint,
+            settings.ai_provider_txt2img,
+            settings.ai_provider_img2img,
+            settings.ai_provider_outpaint,
+        ]
+        if v
+    ):
+        from app.services.gpu_detect import get_cached_gpu_info
+        info = get_cached_gpu_info()
+        cc_str = f" | CC={info.compute_capability}" if info.compute_capability else ""
+        print(
+            f"[gpu] {info.device_name} | {info.vram_gb:.1f} GB{cc_str} | "
+            f"tier={info.tier} | fp16={info.fp16}"
+        )
+        for w in info.warnings:
+            print(f"[gpu] ⚠ {w}")
+        if settings.auto_download_models:
+            # Download model weight files to disk cache in background so first
+            # user request loads from local disk instead of the internet.
+            from app.services.local_diffusion import prefetch_model_files
+            asyncio.create_task(prefetch_model_files())
+
     yield
 
 
@@ -52,6 +80,7 @@ app.include_router(generate.router)
 app.include_router(tools.router)
 app.include_router(ai_tools.router)
 app.include_router(print_tools.router)
+app.include_router(gpu_status.router)
 
 
 @app.get("/api")

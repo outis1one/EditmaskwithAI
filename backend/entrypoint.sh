@@ -62,6 +62,11 @@ else
 fi
 
 echo ""
+echo "Checking GPU capabilities..."
+echo "------------------------------------------"
+python /scripts/gpu_setup.py || echo "Warning: GPU detection failed (non-fatal)"
+
+echo ""
 echo "=========================================="
 echo "Starting FastAPI server..."
 echo "=========================================="

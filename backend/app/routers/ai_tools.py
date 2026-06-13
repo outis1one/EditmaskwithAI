@@ -4,10 +4,12 @@ All endpoints are under /api prefix.
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 import base64
 import asyncio
+import json
 
 from app.services.local_inpaint import (
     lama_inpaint, opencv_inpaint, lama_available, gpu_available, rembg_available,
@@ -191,6 +193,37 @@ async def inpaint_remote(req: InpaintRemoteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/generate/progress")
+async def generation_progress_stream():
+    """
+    SSE stream of local GPU pipeline inference progress.
+    Events are JSON arrays of pipeline state objects, emitted every 200 ms.
+    Each object: {pipeline, state, step, total_steps, progress, message, model_id, …}
+    Clients open this with EventSource before firing a generation POST,
+    then close it when the POST resolves.
+    """
+    from app.services.local_diffusion import get_all_model_states
+
+    async def event_gen():
+        try:
+            while True:
+                states = get_all_model_states()
+                yield f"data: {json.dumps(states)}\n\n"
+                await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.post("/generate/txt2img")
 async def txt2img(req: Txt2ImgRequest):
     """Text-to-image via configured remote provider."""
@@ -327,12 +360,29 @@ async def get_config():
     # Default provider for display (used when no per-op override)
     default_name = (settings.ai_provider or "").lower() or None
 
+    from app.services.gpu_detect import get_cached_gpu_info
+    gpu_info = get_cached_gpu_info()
+
     return {
         "local": {
             "lama": lama_available(),
             "rembg": rembg_available(),
             "opencv": True,
-            "gpu_detected": gpu_available(),
+            "gpu_detected":    gpu_available(),
+            "gpu_backend":     gpu_info.backend,
+            "gpu_device":      gpu_info.device_name,
+            "gpu_vram_total":  gpu_info.vram_total_gb,
+            "gpu_vram_free":   gpu_info.vram_free_gb,
+            "gpu_cc":          gpu_info.compute_capability,
+            "gpu_fp16":        gpu_info.fp16,
+            "gpu_bf16":        gpu_info.bf16,
+            "gpu_fp8":         gpu_info.fp8,
+            "gpu_tensor_cores": gpu_info.tensor_cores,
+            "gpu_tier":        gpu_info.tier,
+            "gpu_eff_vram":    gpu_info.effective_vram_gb,
+            "local_gpu_available": gpu_info.backend in ("cuda", "mps"),
+            "local_gpu_capabilities": gpu_info.capabilities,
+            "local_gpu_warnings": gpu_info.warnings,
         },
         "remote": {
             "default_provider": default_name,
@@ -348,6 +398,164 @@ async def get_config():
             },
         }
     }
+
+
+# ─── Selection image operations ─────────────────────────────────────────────
+
+class ScaleSelectionRequest(BaseModel):
+    image: str           # base64 full canvas
+    mask: str            # base64 selection mask (white = object)
+    scale_pct: float = 103.0  # 103 = 3% bigger, 95 = 5% smaller
+
+
+class AiEditRegionRequest(BaseModel):
+    image: str
+    mask: str
+    instruction: str
+    negative_prompt: str = ""
+    steps: int = 30
+    cfg_scale: float = 7.5
+
+
+class PasteIntoSelectionRequest(BaseModel):
+    image: str        # base64 target canvas
+    mask: str         # base64 selection mask
+    paste_image: str  # base64 image to paste
+
+
+@router.post("/image/scale-selection")
+async def scale_selection(req: ScaleSelectionRequest):
+    """
+    Scale the object selected by mask by scale_pct%, AI-fill the exposed gap.
+    Works purely with local tools (LaMa/OpenCV) — no remote provider needed.
+    """
+    try:
+        import numpy as np
+        from PIL import Image, ImageFilter
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PIL/numpy not available")
+
+    img  = Image.open(BytesIO(_decode(req.image))).convert("RGB")
+    mask = Image.open(BytesIO(_decode(req.mask))).convert("L")
+    if img.size != mask.size:
+        mask = mask.resize(img.size, Image.LANCZOS)
+
+    mask_arr = np.array(mask)
+    ys, xs = np.where(mask_arr > 128)
+    if len(xs) == 0:
+        raise HTTPException(status_code=400, detail="Empty mask — nothing to scale")
+
+    minx, maxx = int(xs.min()), int(xs.max())
+    miny, maxy = int(ys.min()), int(ys.max())
+    cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
+    obj_w, obj_h = maxx - minx + 1, maxy - miny + 1
+
+    scale  = req.scale_pct / 100.0
+    new_w  = max(1, round(obj_w * scale))
+    new_h  = max(1, round(obj_h * scale))
+
+    # Extract masked object crop (RGBA with mask as alpha)
+    img_rgba  = img.convert("RGBA")
+    obj_crop  = img_rgba.crop((minx, miny, maxx + 1, maxy + 1))
+    mask_crop = mask.crop((minx, miny, maxx + 1, maxy + 1))
+    r, g, b, _ = obj_crop.split()
+    obj_masked = Image.merge("RGBA", (r, g, b, mask_crop))
+    scaled_obj = obj_masked.resize((new_w, new_h), Image.LANCZOS)
+
+    # AI-fill the original mask area (gap) with LaMa/OpenCV
+    gap_mask  = mask.filter(ImageFilter.MaxFilter(9))   # expand ~4px for clean seam
+    gap_bytes = BytesIO()
+    img.save(gap_bytes, format="PNG")
+    gap_mask_bytes = BytesIO()
+    gap_mask.save(gap_mask_bytes, format="PNG")
+
+    try:
+        if lama_available():
+            filled_bytes = await asyncio.get_event_loop().run_in_executor(
+                None, lama_inpaint, gap_bytes.getvalue(), gap_mask_bytes.getvalue()
+            )
+        else:
+            filled_bytes = await asyncio.get_event_loop().run_in_executor(
+                None, opencv_inpaint, gap_bytes.getvalue(), gap_mask_bytes.getvalue()
+            )
+        filled = Image.open(BytesIO(filled_bytes)).convert("RGBA")
+    except Exception as exc:
+        print(f"[scale-selection] fill fallback: {exc}")
+        filled = img.convert("RGBA")
+
+    # Paste scaled object centered on original centroid
+    px = round(cx - new_w / 2)
+    py = round(cy - new_h / 2)
+    result = filled.copy()
+    result.paste(scaled_obj, (px, py), scaled_obj.split()[3])
+
+    out = BytesIO()
+    result.convert("RGB").save(out, format="PNG")
+    return {"result": _encode(out.getvalue())}
+
+
+@router.post("/image/ai-edit-region")
+async def ai_edit_region(req: AiEditRegionRequest):
+    """
+    AI-edit the selected region using the configured inpaint provider.
+    Works with local_gpu, InvokeAI, ComfyUI, or OpenAI.
+    """
+    provider = _require_remote("inpaint")
+    result_bytes = await provider.inpaint(
+        _decode(req.image),
+        _decode(req.mask),
+        req.instruction,
+        {"negative_prompt": req.negative_prompt, "steps": req.steps, "cfg_scale": req.cfg_scale},
+    )
+    return {"result": _encode(result_bytes)}
+
+
+@router.post("/image/paste-into-selection")
+async def paste_into_selection(req: PasteIntoSelectionRequest):
+    """
+    Scale a clipboard image to the selection bounding box, mask it to the
+    selection shape, and composite it over the original canvas.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PIL/numpy not available")
+
+    img       = Image.open(BytesIO(_decode(req.image))).convert("RGBA")
+    mask      = Image.open(BytesIO(_decode(req.mask))).convert("L")
+    paste_img = Image.open(BytesIO(_decode(req.paste_image))).convert("RGBA")
+
+    if img.size != mask.size:
+        mask = mask.resize(img.size, Image.LANCZOS)
+
+    mask_arr = np.array(mask)
+    ys, xs   = np.where(mask_arr > 128)
+    if len(xs) == 0:
+        raise HTTPException(status_code=400, detail="Empty mask")
+
+    minx, maxx = int(xs.min()), int(xs.max())
+    miny, maxy = int(ys.min()), int(ys.max())
+    target_w   = maxx - minx + 1
+    target_h   = maxy - miny + 1
+
+    # Scale clipboard image to fit the selection bounding box
+    paste_scaled = paste_img.resize((target_w, target_h), Image.LANCZOS)
+
+    # Clip paste to selection shape using mask
+    mask_crop = mask.crop((minx, miny, maxx + 1, maxy + 1))
+    r, g, b, a = paste_scaled.split()
+    mask_np = np.array(mask_crop)
+    alpha_np = np.array(a)
+    combined = (alpha_np.astype(np.uint16) * mask_np.astype(np.uint16) // 255).astype(np.uint8)
+    paste_final = Image.merge("RGBA", (r, g, b, Image.fromarray(combined)))
+
+    result = img.copy()
+    result.paste(paste_final, (minx, miny), paste_final.split()[3])
+
+    out = BytesIO()
+    result.convert("RGB").save(out, format="PNG")
+    return {"result": _encode(out.getvalue())}
 
 
 # ─── SAM (Segment Anything) ──────────────────────────────────────────────────

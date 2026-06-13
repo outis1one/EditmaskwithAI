@@ -13,6 +13,7 @@ import Helper_class from './../libs/helpers.js';
 import Dialog_class from './../libs/popup.js';
 import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
 import apiService from './../services/api.js';
+import { SelectionActions, updateLayerWithResult } from './selection_actions.js';
 
 class Smart_select_class extends Base_tools_class {
 
@@ -35,6 +36,9 @@ class Smart_select_class extends Base_tools_class {
 
         // Edge canvas for drawing the mask outline
         this.edgeCanvas = null;
+
+        // Quick-action panel shown after selection
+        this.selectionActions = new SelectionActions(this);
     }
 
     load() {
@@ -146,7 +150,7 @@ class Smart_select_class extends Base_tools_class {
             if (isAdditive && this.currentMask) {
                 alertify.success('Added to selection! Shift+Click to add more.');
             } else {
-                alertify.success('Selection complete! Shift+Click to add more, Ctrl+C to copy, Ctrl+X to cut.');
+                this._showActionPanel();
             }
 
         } catch (error) {
@@ -634,9 +638,30 @@ class Smart_select_class extends Base_tools_class {
     }
 
     /**
+     * Show the quick-action panel for the current selection.
+     */
+    _showActionPanel() {
+        var imageData = this.getLayerImageData();
+        var maskData  = this.maskCanvas
+            ? this.maskCanvas.toDataURL('image/png').split(',')[1]
+            : null;
+        if (maskData) {
+            this.selectionActions.show(imageData, maskData);
+        }
+    }
+
+    /**
+     * Update the current layer canvas with a base64 result from a backend operation.
+     */
+    updateLayerWithResult(base64) {
+        updateLayerWithResult(base64, this);
+    }
+
+    /**
      * Clear the current selection
      */
     clearSelection() {
+        this.selectionActions.hide();
         this.currentMask = null;
         this.maskCanvas = null;
         this.edgeCanvas = null;
@@ -647,7 +672,7 @@ class Smart_select_class extends Base_tools_class {
     }
 
     on_leave() {
-        // Don't clear mask when switching tools - AI inpaint needs it
+        this.selectionActions.hide();
         return [];
     }
 }

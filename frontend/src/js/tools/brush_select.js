@@ -11,6 +11,7 @@ import Base_layers_class from './../core/base-layers.js';
 import Helper_class from './../libs/helpers.js';
 import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
 import apiService from './../services/api.js';
+import { SelectionActions, updateLayerWithResult } from './selection_actions.js';
 
 class Brush_select_class extends Base_tools_class {
 
@@ -39,6 +40,9 @@ class Brush_select_class extends Base_tools_class {
 
         // Processing state
         this.isProcessing = false;
+
+        // Quick-action panel shown after selection
+        this.selectionActions = new SelectionActions(this);
     }
 
     load() {
@@ -300,31 +304,23 @@ class Brush_select_class extends Base_tools_class {
     }
 
     /**
-     * Offer to float the selection to a new layer for manipulation (Canva-like workflow)
+     * Show quick-action panel after selection (AI operations, scale, clipboard paste, etc.)
      */
     offerFloatSelection() {
-        var _this = this;
+        var imageData = this.getLayerImageData();
+        var maskData  = this.maskCanvas
+            ? this.maskCanvas.toDataURL('image/png').split(',')[1]
+            : null;
+        if (maskData) {
+            this.selectionActions.show(imageData, maskData);
+        }
+    }
 
-        alertify.confirm(
-            'Selection Complete',
-            'Would you like to move/scale this selection? This will copy it to a new layer.',
-            function() {
-                // Yes - copy to layer and switch to Select tool
-                _this.copyToLayer();
-
-                // Switch to Select tool
-                setTimeout(function() {
-                    var selectTool = document.querySelector('.sidebar_left .item[data-tool="select"]');
-                    if (selectTool) {
-                        selectTool.click();
-                    }
-                }, 100);
-            },
-            function() {
-                // No - just keep the selection
-                alertify.message('Tip: Use Ctrl+C to copy or Ctrl+X to cut the selection.');
-            }
-        ).set('labels', {ok: 'Yes, Move/Scale', cancel: 'Keep Selection'});
+    /**
+     * Update the current layer canvas with a base64 result from a backend operation.
+     */
+    updateLayerWithResult(base64) {
+        updateLayerWithResult(base64, this);
     }
 
     /**
@@ -781,6 +777,7 @@ class Brush_select_class extends Base_tools_class {
     }
 
     clearSelection() {
+        this.selectionActions.hide();
         this.currentMask = null;
         this.maskCanvas = null;
         this.edgeCanvas = null;
@@ -793,8 +790,9 @@ class Brush_select_class extends Base_tools_class {
     }
 
     on_leave() {
+        this.selectionActions.hide();
         this.isDrawing = false;
-        this.isProcessing = false;  // Reset processing state when leaving tool
+        this.isProcessing = false;
         this.brushPath = [];
         return [];
     }

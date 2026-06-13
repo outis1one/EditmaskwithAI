@@ -19,6 +19,8 @@ const DEFAULT_CAPS = {
 
 let _caps = null;
 let _fetchPromise = null;
+let _gpuStatus = null;
+let _gpuFetchPromise = null;
 
 /**
  * Return capabilities (fetched lazily, cached thereafter).
@@ -49,11 +51,28 @@ export function hasRemote() {
 }
 
 /**
+ * Fetch and cache detailed GPU status (hardware, feature flags, model selection per op).
+ * Calls /api/gpu/status — only meaningful when AI_PROVIDER=local_gpu.
+ * Returns null on error.
+ */
+export async function getGpuStatus() {
+    if (_gpuStatus !== null) return _gpuStatus;
+    if (!_gpuFetchPromise) {
+        _gpuFetchPromise = apiService.getGpuStatus()
+            .then(data => { _gpuStatus = data; return _gpuStatus; })
+            .catch(() => { _gpuStatus = null; return null; });
+    }
+    return _gpuFetchPromise;
+}
+
+/**
  * Invalidate cache and re-fetch (call after saving provider settings).
  */
 export async function refreshCapabilities() {
     _caps = null;
     _fetchPromise = null;
+    _gpuStatus = null;
+    _gpuFetchPromise = null;
     return getCapabilities();
 }
 
@@ -62,4 +81,4 @@ export async function refreshCapabilities() {
  */
 getCapabilities();
 
-export default { getCapabilities, getCachedCapabilities, hasRemote, refreshCapabilities };
+export default { getCapabilities, getCachedCapabilities, hasRemote, refreshCapabilities, getGpuStatus };
