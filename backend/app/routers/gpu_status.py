@@ -13,29 +13,49 @@ router = APIRouter(prefix="/api/gpu", tags=["gpu"])
 @router.get("/status")
 async def gpu_status():
     """
-    Return GPU capabilities, VRAM, tier, and per-model download/ready state.
+    Full GPU capability report: hardware, feature flags, VRAM budget,
+    and which model was selected for each operation.
     Frontend polls this to show GPU badge and tool availability.
     """
-    from app.services.gpu_detect import get_cached_gpu_info, get_model_ids
+    from app.services.gpu_detect import get_cached_gpu_info
     from app.services.local_diffusion import get_all_model_states
 
     info = get_cached_gpu_info()
-    model_ids = get_model_ids(info.tier)
 
     return {
-        "backend": info.backend,
-        "device_name": info.device_name,
-        "vram_gb": info.vram_gb,
-        "compute_capability": info.compute_capability,
-        "tier": info.tier,
-        "fp16": info.fp16,
-        "warnings": info.warnings,
-        "capabilities": info.capabilities,
-        "models": {
-            op: {"model_id": mid, "available": mid is not None}
-            for op, mid in model_ids.items()
+        # Hardware
+        "backend":             info.backend,
+        "device_name":         info.device_name,
+        "vram_total_gb":       info.vram_total_gb,
+        "vram_free_gb":        info.vram_free_gb,
+        "compute_capability":  info.compute_capability,
+        # Feature flags
+        "fp16":          info.fp16,
+        "bf16":          info.bf16,
+        "fp8":           info.fp8,
+        "int8":          info.int8,
+        "tensor_cores":  info.tensor_cores,
+        "xformers":      info.xformers,
+        # Derived
+        "effective_vram_gb": info.effective_vram_gb,
+        "tier":              info.tier,
+        # Selected models per operation
+        "recommended": {
+            op: (
+                {
+                    "model_id":   spec.model_id,
+                    "family":     spec.family,
+                    "memory_opt": spec.memory_opt,
+                    "native_res": spec.native_res,
+                    "vram_fp16_gb": spec.vram_fp16_gb,
+                }
+                if spec else None
+            )
+            for op, spec in info.recommended.items()
         },
         "pipeline_states": get_all_model_states(),
+        "warnings":    info.warnings,
+        "capabilities": info.capabilities,
     }
 
 
@@ -46,9 +66,9 @@ class PrefetchRequest(BaseModel):
 @router.post("/prefetch")
 async def prefetch_models(req: PrefetchRequest = PrefetchRequest()):
     """
-    Kick off background model downloads for the requested operations.
+    Eagerly load pipelines into GPU memory for the requested operations.
     Returns immediately; poll /api/gpu/prefetch-status for progress.
-    Default: prefetch inpaint, txt2img, img2img.
+    Default: inpaint, txt2img, img2img.
     """
     ops = req.operations or ["inpaint", "txt2img", "img2img"]
     valid = {"inpaint", "txt2img", "img2img", "outpaint", "upscale"}

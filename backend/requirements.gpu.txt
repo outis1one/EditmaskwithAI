@@ -9,16 +9,22 @@
 # =============================================================================
 
 # HuggingFace Diffusers ecosystem
-diffusers>=0.27.0
-transformers>=4.38.0
+# 0.29.0+ required for FLUX pipeline support
+diffusers>=0.29.0
+transformers>=4.40.0
 accelerate>=0.27.0
-huggingface-hub>=0.21.0
+huggingface-hub>=0.23.0
 safetensors>=0.4.0
 
 # Required by SDXL pipelines
 invisible-watermark>=0.2.0
 omegaconf>=2.3.0
 
-# xformers — further reduces VRAM usage on CUDA (install separately, version must
-# match your PyTorch/CUDA; leave out if unsure and use attention_slicing instead)
+# Required by FLUX (T5 text encoder tokenizer)
+sentencepiece>=0.2.0
+
+# xformers — reduces attention VRAM ~20-30%, often unlocks the next model tier
+# Must match your PyTorch+CUDA version; leave out if unsure.
+# Install post-container-start if needed:
+#   pip install xformers --index-url https://download.pytorch.org/whl/cu121
 # xformers

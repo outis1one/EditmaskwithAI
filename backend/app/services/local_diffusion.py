@@ -1,11 +1,18 @@
 """
 Local GPU diffusion provider — HuggingFace Diffusers backend.
 
-Implements the RemoteAIProvider interface so all existing routes work unchanged.
-Models are lazy-loaded on first request and cached in memory.
-VRAM-aware: picks the right model and memory optimisations per GPU tier.
+Implements RemoteAIProvider so all existing routes work unchanged.
+Pipelines are lazy-loaded, cached in an LRU store, and memory-optimised
+per the ModelSpec chosen by gpu_detect.
 
-Requires: diffusers, transformers, accelerate, safetensors (requirements.gpu.txt)
+Supported model families:
+  flux  → FluxPipeline / FluxImg2ImgPipeline      (FLUX.1-schnell)
+  sdxl  → StableDiffusionXL*Pipeline              (SDXL base + SDXL Inpaint)
+  sd2x  → StableDiffusion2*Pipeline               (SD 2.x)
+  sd15  → StableDiffusionPipeline                 (SD 1.5)
+
+Requires: diffusers>=0.29.0, transformers, accelerate, safetensors
+          (all in requirements.gpu.txt)
 """
 from __future__ import annotations
 
@@ -17,10 +24,15 @@ from typing import Optional
 
 from PIL import Image
 
-from app.services.gpu_detect import get_cached_gpu_info, get_model_ids
+from app.services.gpu_detect import (
+    GpuCapabilities,
+    ModelSpec,
+    get_cached_gpu_info,
+    infer_spec_from_model_id,
+)
 from app.services.remote_provider import RemoteAIProvider
 
-# ── Download / load state tracking ──────────────────────────────────────────
+# ── Model state tracking ──────────────────────────────────────────────────────
 
 _states: dict[str, dict] = {}
 _states_lock = threading.Lock()
@@ -36,11 +48,9 @@ def get_all_model_states() -> list[dict]:
         return list(_states.values())
 
 
-# ── Pipeline cache with LRU eviction ─────────────────────────────────────────
+# ── LRU pipeline cache ────────────────────────────────────────────────────────
 
 class _PipelineCache:
-    """Keep at most `maxsize` loaded pipelines; evicts LRU when full."""
-
     def __init__(self, maxsize: int = 2):
         self._cache: OrderedDict[str, object] = OrderedDict()
         self._maxsize = maxsize
@@ -59,48 +69,175 @@ class _PipelineCache:
                 self._cache.move_to_end(key)
             else:
                 if len(self._cache) >= self._maxsize:
-                    evicted_key, evicted_pipe = self._cache.popitem(last=False)
-                    _offload_pipe(evicted_pipe, evicted_key)
+                    evicted_key, evicted = self._cache.popitem(last=False)
+                    _evict(evicted, evicted_key)
                 self._cache[key] = pipe
 
 
-def _offload_pipe(pipe, key: str):
-    """Move pipeline to CPU and free GPU memory."""
+def _evict(pipe, key: str):
     try:
         import torch
         pipe.to("cpu")
         torch.cuda.empty_cache()
-        print(f"[local_gpu] Evicted pipeline '{key}' from GPU cache")
+        print(f"[local_gpu] Evicted '{key}' from GPU cache")
     except Exception:
         pass
+
+
+# ── Pipeline loading helpers ──────────────────────────────────────────────────
+
+def _apply_hf_token():
+    try:
+        from app.config import settings
+        if settings.hf_token:
+            import huggingface_hub
+            huggingface_hub.login(token=settings.hf_token, add_to_git_credential=False)
+    except Exception:
+        pass
+
+
+def _get_spec(pipe_type: str, info: GpuCapabilities) -> ModelSpec:
+    """Return the ModelSpec for a pipeline type, respecting user overrides."""
+    # Map outpaint to inpaint (same pipeline)
+    op_key = "inpaint" if pipe_type == "outpaint" else pipe_type
+    # img2img uses same family/model as txt2img for FLUX/SDXL
+    if pipe_type == "img2img" and op_key not in info.recommended:
+        op_key = "txt2img"
+
+    # User config override
+    try:
+        from app.config import settings
+        override_map = {
+            "inpaint":  settings.hf_model_inpaint,
+            "outpaint": settings.hf_model_inpaint,
+            "txt2img":  settings.hf_model_txt2img,
+            "img2img":  settings.hf_model_img2img,
+        }
+        override_id = override_map.get(pipe_type, "") or ""
+        if override_id:
+            return infer_spec_from_model_id(override_id)
+    except Exception:
+        pass
+
+    spec = info.recommended.get(op_key)
+    if spec is None:
+        raise RuntimeError(
+            f"No model available for '{pipe_type}' at effective VRAM "
+            f"{info.effective_vram_gb:.1f} GB. GPU may not have enough memory."
+        )
+    return spec
+
+
+def _load_sd_pipeline(pipe_type: str, spec: ModelSpec, info: GpuCapabilities) -> object:
+    """Load a Stable Diffusion (1.5 / 2.x / XL) pipeline."""
+    import torch
+    from diffusers import (
+        StableDiffusionPipeline,
+        StableDiffusionImg2ImgPipeline,
+        StableDiffusionInpaintPipeline,
+        StableDiffusionUpscalePipeline,
+        StableDiffusionXLPipeline,
+        StableDiffusionXLImg2ImgPipeline,
+        StableDiffusionXLInpaintPipeline,
+    )
+
+    dtype = torch.float16 if info.fp16 else torch.float32
+    is_xl = spec.family == "sdxl"
+    kwargs: dict = {"torch_dtype": dtype}
+    if not is_xl:
+        kwargs["safety_checker"] = None
+        kwargs["requires_safety_checker"] = False
+
+    op_key = "inpaint" if pipe_type in ("inpaint", "outpaint") else pipe_type
+
+    if op_key == "inpaint":
+        cls = StableDiffusionXLInpaintPipeline if is_xl else StableDiffusionInpaintPipeline
+    elif op_key == "txt2img":
+        cls = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
+    elif op_key == "img2img":
+        cls = StableDiffusionXLImg2ImgPipeline if is_xl else StableDiffusionImg2ImgPipeline
+    elif op_key == "upscale":
+        cls = StableDiffusionUpscalePipeline
+    else:
+        raise ValueError(f"Unknown SD operation: {op_key}")
+
+    pipe = cls.from_pretrained(spec.model_id, **kwargs)
+    return _apply_mem_opts(pipe, spec, info)
+
+
+def _load_flux_pipeline(pipe_type: str, spec: ModelSpec, info: GpuCapabilities) -> object:
+    """Load a FLUX pipeline (txt2img or img2img)."""
+    import torch
+    from diffusers import FluxPipeline, FluxImg2ImgPipeline
+
+    # FLUX works best in bf16 on Ampere+; fp16 on older Turing/Pascal
+    dtype = torch.bfloat16 if info.bf16 else torch.float16
+
+    op_key = "img2img" if pipe_type == "img2img" else "txt2img"
+    cls = FluxImg2ImgPipeline if op_key == "img2img" else FluxPipeline
+
+    pipe = cls.from_pretrained(spec.model_id, torch_dtype=dtype)
+    return _apply_mem_opts(pipe, spec, info)
+
+
+def _apply_mem_opts(pipe, spec: ModelSpec, info: GpuCapabilities) -> object:
+    """Apply memory optimisations then move pipeline to device."""
+    device = info.backend
+    opt = spec.memory_opt
+
+    # VAE slicing is always beneficial (reduces VRAM for decoding large images)
+    try:
+        pipe.enable_vae_slicing()
+    except Exception:
+        pass
+
+    # xformers memory-efficient attention
+    if info.xformers and spec.family != "flux":
+        try:
+            pipe.enable_xformers_memory_efficient_attention()
+        except Exception:
+            pass
+
+    if opt == "sequential_cpu_offload":
+        # Each layer moved to GPU only during its forward pass — very VRAM-efficient
+        # enable_sequential_cpu_offload() also calls .to(device) internally
+        try:
+            pipe.enable_sequential_cpu_offload()
+        except Exception:
+            pipe.to("cpu")
+
+    elif opt == "model_cpu_offload":
+        # Entire sub-models (text encoder, unet/transformer, VAE) moved between CPU/GPU
+        # Faster than sequential but needs ~3-4 GB free to hold the active module
+        try:
+            pipe.enable_model_cpu_offload()
+        except Exception:
+            pipe.to(device)
+
+    elif opt == "attention_slicing":
+        try:
+            pipe.enable_attention_slicing(1)
+        except Exception:
+            pass
+        pipe.to(device)
+
+    else:  # "none"
+        pipe.to(device)
+
+    return pipe
 
 
 # ── Provider ─────────────────────────────────────────────────────────────────
 
 class LocalDiffusionProvider(RemoteAIProvider):
-    """
-    HuggingFace Diffusers local inference.
-    All operations run in a thread pool to avoid blocking the event loop.
-    """
-
     def __init__(self, max_cached_pipelines: int = 2):
         self._cache = _PipelineCache(maxsize=max_cached_pipelines)
         self._load_locks: dict[str, asyncio.Lock] = {}
         self._meta_lock = asyncio.Lock()
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
-
     @property
-    def _info(self):
+    def _info(self) -> GpuCapabilities:
         return get_cached_gpu_info()
-
-    @property
-    def _device(self) -> str:
-        return self._info.backend
-
-    def _torch_dtype(self):
-        import torch
-        return torch.float16 if self._info.fp16 else torch.float32
 
     async def _lock_for(self, key: str) -> asyncio.Lock:
         async with self._meta_lock:
@@ -109,120 +246,22 @@ class LocalDiffusionProvider(RemoteAIProvider):
             return self._load_locks[key]
 
     def _load_pipeline_sync(self, pipe_type: str) -> object:
-        """Synchronous model load — runs in thread pool so HF download progress works."""
-        import torch
-        from diffusers import (
-            StableDiffusionInpaintPipeline,
-            StableDiffusionXLInpaintPipeline,
-            StableDiffusionPipeline,
-            StableDiffusionXLPipeline,
-            StableDiffusionImg2ImgPipeline,
-            StableDiffusionXLImg2ImgPipeline,
-            StableDiffusionUpscalePipeline,
-        )
-
         info = self._info
-        tier = info.tier
-        device = self._device
-        dtype = self._torch_dtype()
-        model_ids = get_model_ids(tier)
+        spec = _get_spec(pipe_type, info)
 
-        # Determine canonical operation key for inpaint-based ops
-        op_key = "inpaint" if pipe_type in ("inpaint", "outpaint") else pipe_type
-        model_id = model_ids.get(op_key)
-
-        # Allow config-level model override
-        try:
-            from app.config import settings
-            override_map = {
-                "inpaint":  settings.hf_model_inpaint,
-                "outpaint": settings.hf_model_inpaint,
-                "txt2img":  settings.hf_model_txt2img,
-                "img2img":  settings.hf_model_img2img,
-            }
-            override = override_map.get(pipe_type, "")
-            if override:
-                model_id = override
-        except Exception:
-            pass
-
-        if not model_id:
-            raise RuntimeError(
-                f"No model configured for '{pipe_type}' on tier '{tier}'. "
-                f"GPU may not have enough VRAM for this operation."
-            )
-
-        is_xl = "xl" in model_id.lower()
-        _set_state(pipe_type, pipeline=pipe_type, model_id=model_id,
+        _apply_hf_token()
+        _set_state(pipe_type, pipeline=pipe_type, model_id=spec.model_id,
+                   family=spec.family, memory_opt=spec.memory_opt,
                    state="downloading", progress=0.0,
-                   message=f"Downloading {model_id}…", error="")
-
+                   message=f"Downloading {spec.model_id}…", error="")
         try:
-            # Apply HuggingFace token if configured (needed for gated models)
-            try:
-                from app.config import settings
-                if settings.hf_token:
-                    import huggingface_hub
-                    huggingface_hub.login(token=settings.hf_token, add_to_git_credential=False)
-            except Exception:
-                pass
-
-            kwargs: dict = {"torch_dtype": dtype}
-            if not is_xl:
-                # Disable safety checker — we're editing existing images, not generating NSFW
-                kwargs["safety_checker"] = None
-                kwargs["requires_safety_checker"] = False
-
-            if pipe_type == "inpaint" or pipe_type == "outpaint":
-                cls = StableDiffusionXLInpaintPipeline if is_xl else StableDiffusionInpaintPipeline
-            elif pipe_type == "txt2img":
-                cls = StableDiffusionXLPipeline if is_xl else StableDiffusionPipeline
-            elif pipe_type == "img2img":
-                cls = StableDiffusionXLImg2ImgPipeline if is_xl else StableDiffusionImg2ImgPipeline
-            elif pipe_type == "upscale":
-                model_id = model_ids.get("upscale")
-                if not model_id:
-                    raise RuntimeError("Diffusion upscale model not available for this GPU tier.")
-                cls = StableDiffusionUpscalePipeline
+            if spec.family == "flux":
+                pipe = _load_flux_pipeline(pipe_type, spec, info)
             else:
-                raise ValueError(f"Unknown pipeline type: {pipe_type}")
-
-            pipe = cls.from_pretrained(model_id, **kwargs)
-
-            # Memory optimisations — applied based on VRAM tier:
-            #   minimal/legacy: full aggressive offloading (sequential CPU offload)
-            #   medium:         attention slicing + VAE slicing
-            #   high/ultra:     VAE slicing only (VRAM is plentiful)
-            try:
-                pipe.enable_vae_slicing()
-            except Exception:
-                pass
-
-            if tier in ("minimal", "legacy", "medium"):
-                try:
-                    pipe.enable_attention_slicing(1)  # slice_size=1 = most aggressive
-                except Exception:
-                    pass
-
-            if tier in ("minimal", "legacy"):
-                # Sequential CPU offload keeps only the active layer on GPU — very low VRAM
-                # but adds overhead per-step. Skip .to(device) when this is active.
-                if device == "cuda":
-                    try:
-                        pipe.enable_sequential_cpu_offload()
-                    except Exception:
-                        # Fallback: model stays on CPU entirely
-                        pass
-                elif device == "cpu":
-                    pass  # already on CPU
-                else:
-                    pipe = pipe.to(device)
-            else:
-                pipe = pipe.to(device)
+                pipe = _load_sd_pipeline(pipe_type, spec, info)
 
             _set_state(pipe_type, state="ready", progress=100.0, message="Ready")
             return pipe
-
         except Exception as exc:
             _set_state(pipe_type, state="failed", error=str(exc), message="Load failed")
             raise
@@ -234,108 +273,108 @@ class LocalDiffusionProvider(RemoteAIProvider):
 
         lock = await self._lock_for(pipe_type)
         async with lock:
-            # Re-check after acquiring per-key lock
             cached = await self._cache.get(pipe_type)
             if cached is not None:
                 return cached
-
             loop = asyncio.get_event_loop()
             pipe = await loop.run_in_executor(None, self._load_pipeline_sync, pipe_type)
             await self._cache.put(pipe_type, pipe)
             return pipe
 
-    # ── RemoteAIProvider interface ────────────────────────────────────────────
+    # ── RemoteAIProvider ──────────────────────────────────────────────────────
 
     async def inpaint(self, image_bytes: bytes, mask_bytes: bytes, prompt: str, params: dict) -> bytes:
         pipe = await self._get_pipeline("inpaint")
-        info = self._info
+        spec = _get_spec("inpaint", self._info)
 
-        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+        img  = Image.open(BytesIO(image_bytes)).convert("RGB")
         mask = Image.open(BytesIO(mask_bytes)).convert("L")
-        orig_size = img.size
-
-        target = 1024 if info.tier in ("ultra", "high") else 512
-        img_r, mask_r = _resize_pair(img, mask, target)
-
+        orig = img.size
+        img_r, mask_r = _resize_pair(img, mask, spec.native_res)
 
         steps = int(params.get("steps", 30))
-        cfg = float(params.get("cfg_scale", 7.5))
-        neg = params.get("negative_prompt", "") or None
+        cfg   = float(params.get("cfg_scale", 7.5))
+        neg   = params.get("negative_prompt", "") or None
 
         def _run():
-            result = pipe(
+            return pipe(
                 prompt=prompt,
                 negative_prompt=neg,
                 image=img_r,
                 mask_image=mask_r,
                 num_inference_steps=steps,
                 guidance_scale=cfg,
-            ).images[0]
-            return result.resize(orig_size, Image.LANCZOS)
+            ).images[0].resize(orig, Image.LANCZOS)
 
-        loop = asyncio.get_event_loop()
-        result_img = await loop.run_in_executor(None, _run)
-        return _to_png(result_img)
+        return _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
 
     async def txt2img(self, prompt: str, width: int, height: int, params: dict) -> bytes:
         pipe = await self._get_pipeline("txt2img")
-        info = self._info
+        spec = _get_spec("txt2img", self._info)
 
-        max_dim = 1024 if info.tier in ("ultra", "high") else (768 if info.tier == "medium" else 512)
-        w = min(width, max_dim) // 8 * 8
+        max_dim = spec.native_res
+        w = min(width,  max_dim) // 8 * 8
         h = min(height, max_dim) // 8 * 8
-
-        steps = int(params.get("steps", 30))
-        cfg = float(params.get("cfg_scale", 7.5))
-        neg = params.get("negative_prompt", "") or None
         seed = int(params.get("seed", 0))
 
-        device = self._device
+        is_flux = spec.family == "flux"
 
         def _run():
             import torch
+            device = self._info.backend
             gen = torch.Generator(device=device).manual_seed(seed) if seed else None
-            return pipe(
-                prompt=prompt,
-                negative_prompt=neg,
-                width=w,
-                height=h,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                generator=gen,
-            ).images[0]
 
-        loop = asyncio.get_event_loop()
-        result_img = await loop.run_in_executor(None, _run)
-        return _to_png(result_img)
+            if is_flux:
+                return pipe(
+                    prompt=prompt,
+                    width=w, height=h,
+                    num_inference_steps=4,   # FLUX.1-schnell is a 4-step model
+                    guidance_scale=0.0,      # fully CFG-distilled
+                    max_sequence_length=256,
+                    generator=gen,
+                ).images[0]
+            else:
+                return pipe(
+                    prompt=prompt,
+                    negative_prompt=params.get("negative_prompt", "") or None,
+                    width=w, height=h,
+                    num_inference_steps=int(params.get("steps", 30)),
+                    guidance_scale=float(params.get("cfg_scale", 7.5)),
+                    generator=gen,
+                ).images[0]
+
+        return _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
 
     async def img2img(self, image_bytes: bytes, prompt: str, strength: float, params: dict) -> bytes:
         pipe = await self._get_pipeline("img2img")
-        info = self._info
+        spec = _get_spec("img2img", self._info)
 
-        img = Image.open(BytesIO(image_bytes)).convert("RGB")
-        orig_size = img.size
-        target = 1024 if info.tier in ("ultra", "high") else (768 if info.tier == "medium" else 512)
-        img_r = _resize_square(img, target)
-
-        steps = int(params.get("steps", 30))
-        cfg = float(params.get("cfg_scale", 7.5))
-        neg = params.get("negative_prompt", "") or None
+        img  = Image.open(BytesIO(image_bytes)).convert("RGB")
+        orig = img.size
+        img_r = _resize_square(img, spec.native_res)
+        is_flux = spec.family == "flux"
 
         def _run():
-            result = pipe(
-                prompt=prompt,
-                negative_prompt=neg,
-                image=img_r,
-                strength=strength,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-            ).images[0]
-            return result.resize(orig_size, Image.LANCZOS)
+            if is_flux:
+                result = pipe(
+                    prompt=prompt,
+                    image=img_r,
+                    strength=strength,
+                    num_inference_steps=4,
+                    guidance_scale=0.0,
+                ).images[0]
+            else:
+                result = pipe(
+                    prompt=prompt,
+                    negative_prompt=params.get("negative_prompt", "") or None,
+                    image=img_r,
+                    strength=strength,
+                    num_inference_steps=int(params.get("steps", 30)),
+                    guidance_scale=float(params.get("cfg_scale", 7.5)),
+                ).images[0]
+            return result.resize(orig, Image.LANCZOS)
 
-        loop = asyncio.get_event_loop()
-        result_img = await loop.run_in_executor(None, _run)
-        return _to_png(result_img)
+        return _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
 
     async def outpaint(self, image_bytes: bytes, direction: str, size: int, prompt: str) -> bytes:
         from PIL import ImageDraw
@@ -343,36 +382,21 @@ class LocalDiffusionProvider(RemoteAIProvider):
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
         w, h = img.size
 
-        if direction == "right":
-            new_size = (w + size, h)
-            paste_at = (0, 0)
-            mask_box = (w, 0, w + size, h)
-        elif direction == "left":
-            new_size = (w + size, h)
-            paste_at = (size, 0)
-            mask_box = (0, 0, size, h)
-        elif direction == "bottom":
-            new_size = (w, h + size)
-            paste_at = (0, 0)
-            mask_box = (0, h, w, h + size)
-        else:  # top
-            new_size = (w, h + size)
-            paste_at = (0, size)
-            mask_box = (0, 0, w, size)
+        positions = {
+            "right":  ((w + size, h),      (0, 0),    (w, 0, w + size, h)),
+            "left":   ((w + size, h),      (size, 0), (0, 0, size, h)),
+            "bottom": ((w, h + size),      (0, 0),    (0, h, w, h + size)),
+            "top":    ((w, h + size),      (0, size), (0, 0, w, size)),
+        }
+        new_size, paste_at, mask_box = positions[direction]
 
         expanded = Image.new("RGB", new_size, (127, 127, 127))
         expanded.paste(img, paste_at)
-
         mask = Image.new("L", new_size, 0)
-        draw = ImageDraw.Draw(mask)
-        draw.rectangle(mask_box, fill=255)
+        ImageDraw.Draw(mask).rectangle(mask_box, fill=255)
 
-        params: dict = {}
         fill_prompt = prompt or "seamless natural continuation of the scene"
-        result = await self.inpaint(
-            _to_png(expanded), _to_png(mask), fill_prompt, params
-        )
-        return result
+        return await self.inpaint(_to_png(expanded), _to_png(mask), fill_prompt, {})
 
     async def health(self) -> bool:
         return True
@@ -381,28 +405,22 @@ class LocalDiffusionProvider(RemoteAIProvider):
         return self._info.capabilities
 
 
-# ── Image helpers ─────────────────────────────────────────────────────────────
+# ── Image utilities ───────────────────────────────────────────────────────────
 
-def _resize_pair(
-    img: Image.Image, mask: Image.Image, target: int
-) -> tuple[Image.Image, Image.Image]:
-    """Resize image and mask so the longest side equals target, divisible by 8."""
+def _resize_pair(img: Image.Image, mask: Image.Image, target: int):
     w, h = img.size
     scale = target / max(w, h)
-    new_w = max(8, int(w * scale) // 8 * 8)
-    new_h = max(8, int(h * scale) // 8 * 8)
-    return (
-        img.resize((new_w, new_h), Image.LANCZOS),
-        mask.resize((new_w, new_h), Image.NEAREST),
-    )
+    nw = max(8, int(w * scale) // 8 * 8)
+    nh = max(8, int(h * scale) // 8 * 8)
+    return img.resize((nw, nh), Image.LANCZOS), mask.resize((nw, nh), Image.NEAREST)
 
 
 def _resize_square(img: Image.Image, target: int) -> Image.Image:
     w, h = img.size
     scale = target / max(w, h)
-    new_w = max(8, int(w * scale) // 8 * 8)
-    new_h = max(8, int(h * scale) // 8 * 8)
-    return img.resize((new_w, new_h), Image.LANCZOS)
+    nw = max(8, int(w * scale) // 8 * 8)
+    nh = max(8, int(h * scale) // 8 * 8)
+    return img.resize((nw, nh), Image.LANCZOS)
 
 
 def _to_png(img: Image.Image) -> bytes:
@@ -425,60 +443,59 @@ def get_local_diffusion_provider(max_pipelines: int = 2) -> LocalDiffusionProvid
 
 async def prefetch_model_files() -> None:
     """
-    Download model weight files to the HuggingFace disk cache without loading
-    them into GPU memory.  Run as a background task at container startup so the
-    first user request loads from disk (fast) rather than the internet (slow).
+    Download model weight files to HuggingFace disk cache without loading into GPU.
+    Called at container startup so the first request loads from disk (fast).
     """
-    from app.services.gpu_detect import get_cached_gpu_info, get_model_ids
-
-    info = get_cached_gpu_info()
-    model_ids = get_model_ids(info.tier)
-
+    from app.services.gpu_detect import get_cached_gpu_info
     try:
         from huggingface_hub import snapshot_download
     except ImportError:
         print("[local_gpu] huggingface_hub not installed — skipping model prefetch")
         return
 
+    info = get_cached_gpu_info()
+    _apply_hf_token()
+
     loop = asyncio.get_event_loop()
-
-    # Override model IDs from config if provided
-    try:
-        from app.config import settings
-        overrides = {
-            "inpaint": settings.hf_model_inpaint,
-            "txt2img": settings.hf_model_txt2img,
-            "img2img": settings.hf_model_img2img,
-        }
-        for op, override in overrides.items():
-            if override:
-                model_ids[op] = override
-    except Exception:
-        pass
-
     seen: set[str] = set()
-    for op, mid in model_ids.items():
-        if not mid or mid in seen:
+
+    for op, spec in info.recommended.items():
+        if spec is None or spec.model_id in seen:
             continue
-        seen.add(mid)
+        seen.add(spec.model_id)
 
-        _set_state(op, pipeline=op, model_id=mid, state="downloading",
-                   progress=0.0, message=f"Downloading {mid}…", error="")
-        print(f"[local_gpu] Prefetching model files: {mid}")
+        # Apply user override if set
+        try:
+            from app.config import settings
+            override_map = {
+                "inpaint":  settings.hf_model_inpaint,
+                "txt2img":  settings.hf_model_txt2img,
+                "img2img":  settings.hf_model_img2img,
+            }
+            override = override_map.get(op, "") or ""
+            if override and override not in seen:
+                seen.add(override)
+                spec = infer_spec_from_model_id(override)
+        except Exception:
+            pass
 
-        def _dl(repo_id: str = mid):
+        _set_state(op, pipeline=op, model_id=spec.model_id, family=spec.family,
+                   memory_opt=spec.memory_opt, state="downloading", progress=0.0,
+                   message=f"Downloading {spec.model_id}…", error="")
+        print(f"[local_gpu] Prefetching: {spec.model_id}")
+
+        def _dl(model_id=spec.model_id):
             snapshot_download(
-                repo_id=repo_id,
-                # Skip TF/Flax/MsgPack variants — we only need PyTorch / safetensors
+                repo_id=model_id,
                 ignore_patterns=["*.msgpack", "flax_*", "tf_*", "rust_model*"],
             )
 
         try:
             await loop.run_in_executor(None, _dl)
             _set_state(op, state="cached", progress=100.0,
-                       message="Files cached — will load into GPU on first request")
-            print(f"[local_gpu] ✓ Cached: {mid}")
+                       message="Files cached — loads into GPU on first request")
+            print(f"[local_gpu] ✓ Cached: {spec.model_id}")
         except Exception as exc:
             _set_state(op, state="download_failed", error=str(exc),
                        message="Download failed — will retry on first request")
-            print(f"[local_gpu] Prefetch failed for {mid}: {exc}")
+            print(f"[local_gpu] Prefetch failed for {spec.model_id}: {exc}")
