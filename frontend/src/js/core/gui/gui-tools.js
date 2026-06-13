@@ -46,23 +46,28 @@ class GUI_tools_class {
 					moduleKey = parts[parts.length - 1];
 				}
 
-				var classObj = plugins_context(key);
-				var object = new classObj.default(ctx);
+				try {
+					var classObj = plugins_context(key);
+					if (!classObj.default) return; // skip helper files without a default export
+					var object = new classObj.default(ctx);
 
-				var title = _this.Helper.ucfirst(object.name);
-				title = title.replace(/_/, ' ');
+					var title = _this.Helper.ucfirst(object.name);
+					title = title.replace(/_/, ' ');
 
-				_this.tools_modules[moduleKey] = {
-					key: moduleKey,
-					full_key: full_key,
-					name: object.name,
-					title: title,
-					object: object,
-				};
+					_this.tools_modules[moduleKey] = {
+						key: moduleKey,
+						full_key: full_key,
+						name: object.name,
+						title: title,
+						object: object,
+					};
 
-				//init events once
-				if(typeof object.load != "undefined") {
-					object.load();
+					//init events once
+					if(typeof object.load != "undefined") {
+						object.load();
+					}
+				} catch(e) {
+					console.error('[load_plugins] Failed to load ' + key + ':', e);
 				}
 			}
 		});
