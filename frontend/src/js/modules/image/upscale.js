@@ -13,6 +13,7 @@ import config from './../../config.js';
 import Base_layers_class from './../../core/base-layers.js';
 import Dialog_class from './../../libs/popup.js';
 import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.js';
+import { showProgress, updateProgress, hideProgress } from './../../libs/progress_overlay.js';
 
 var instance = null;
 
@@ -221,7 +222,12 @@ class Image_upscale_class {
             ? `Auto (${caps.recommended_label || 'best available'})`
             : (METHOD_LABELS[method] || method);
 
-        alertify.message(`Upscaling ${scale}× · ${methodLabel}…`, 0);
+        var isAI = method !== 'lanczos';
+        showProgress(
+            `Upscaling ${scale}× with ${methodLabel}…` +
+            (isAI ? '\nAI is reconstructing detail — this may take 30–120 seconds.' : ''),
+            isAI ? 90 : 10
+        );
 
         try {
             var layerCanvas = document.createElement('canvas');
@@ -276,21 +282,21 @@ class Image_upscale_class {
                     );
                 }
 
-                alertify.dismissAll();
+                hideProgress();
                 alertify.success(
                     `${result.output.width}×${result.output.height}px · ${usedLabel}`
                 );
                 this.isProcessing = false;
             };
             img.onerror = () => {
-                alertify.dismissAll();
+                hideProgress();
                 alertify.error('Failed to load upscaled image.');
                 this.isProcessing = false;
             };
             img.src = 'data:image/png;base64,' + result.result;
 
         } catch (err) {
-            alertify.dismissAll();
+            hideProgress();
             alertify.error('Upscale failed: ' + (err.message || err));
             this.isProcessing = false;
         }

@@ -13,6 +13,7 @@ import Base_layers_class from './../../core/base-layers.js';
 import Dialog_class from './../../libs/popup.js';
 import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.js';
 import { getCapabilities } from './../../api/capabilities.js';
+import { showProgress, updateProgress, hideProgress } from './../../libs/progress_overlay.js';
 
 const FRAME_SIZES = [
     '5x7', '8x10', '11x14', '18x24', '16x20', '20x24', '24x36',
@@ -153,11 +154,11 @@ class Image_print_prepare_class {
         var neededScale = Math.max(targetW / origW, targetH / origH);
         var willUpscale = neededScale > 1.05;
 
-        alertify.message(
+        showProgress(
             willUpscale
-                ? `Upscaling ${neededScale.toFixed(1)}× with AI, then fitting to frame… this may take a minute`
+                ? `Upscaling ${neededScale.toFixed(1)}× with AI, then fitting to frame…\nAI is reconstructing detail — this may take 1–3 minutes.`
                 : 'Fitting to frame…',
-            0
+            willUpscale ? 120 : 8
         );
 
         try {
@@ -188,6 +189,7 @@ class Image_print_prepare_class {
             }
             var result = await r.json();
 
+            updateProgress(90, 'Placing result…');
             var img = new Image();
             img.onload = () => {
                 var resultCanvas = document.createElement('canvas');
@@ -225,7 +227,7 @@ class Image_print_prepare_class {
                     );
                 }
 
-                alertify.dismissAll();
+                hideProgress();
                 var upscaleNote = result.upscale_applied
                     ? ` · ${result.upscale_factor}× ${result.upscale_method}`
                     : ' · no upscale needed';
@@ -235,14 +237,14 @@ class Image_print_prepare_class {
                 this.isProcessing = false;
             };
             img.onerror = () => {
-                alertify.dismissAll();
+                hideProgress();
                 alertify.error('Failed to load result.');
                 this.isProcessing = false;
             };
             img.src = 'data:image/png;base64,' + result.result;
 
         } catch (err) {
-            alertify.dismissAll();
+            hideProgress();
             alertify.error('Prepare for Print failed: ' + (err.message || err));
             this.isProcessing = false;
         }

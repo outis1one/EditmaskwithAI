@@ -15,6 +15,7 @@ import Base_layers_class from './../../core/base-layers.js';
 import Dialog_class from './../../libs/popup.js';
 import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.js';
 import { getCapabilities } from './../../api/capabilities.js';
+import { showProgress, hideProgress } from './../../libs/progress_overlay.js';
 
 var instance = null;
 
@@ -123,11 +124,11 @@ class Image_frame_fit_class {
         this.isProcessing = true;
 
         var mode = params.mode || 'smart';
-        alertify.message(
+        showProgress(
             mode === 'extend'
-                ? 'Fitting to frame with AI extension... please wait'
-                : 'Fitting to frame...',
-            0
+                ? 'Fitting to frame with AI extension…'
+                : 'Fitting to frame…',
+            mode === 'extend' ? 45 : 5
         );
 
         try {
@@ -203,7 +204,7 @@ class Image_frame_fit_class {
                     );
                 }
 
-                alertify.dismissAll();
+                hideProgress();
                 alertify.success(
                     `Done! ${result.output_pixels.width}×${result.output_pixels.height}px` +
                     ` (${result.frame} ${result.orientation}, ${result.mode_used})`
@@ -211,14 +212,14 @@ class Image_frame_fit_class {
                 this.isProcessing = false;
             };
             img.onerror = () => {
-                alertify.dismissAll();
+                hideProgress();
                 alertify.error('Failed to load result.');
                 this.isProcessing = false;
             };
             img.src = 'data:image/png;base64,' + result.result;
 
         } catch (err) {
-            alertify.dismissAll();
+            hideProgress();
             alertify.error('Frame fit failed: ' + (err.message || err));
             this.isProcessing = false;
         }

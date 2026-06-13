@@ -18,6 +18,7 @@ import app from './../app.js';
 import config from './../config.js';
 import Base_layers_class from './../core/base-layers.js';
 import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
+import { showProgress, hideProgress } from './../libs/progress_overlay.js';
 
 const BASE = window.API_BASE_URL || '';
 
@@ -175,7 +176,7 @@ export class SelectionActions {
     async _scaleSelection(scalePct) {
         if (!this._check()) return;
         this.hide();
-        alertify.message('Scaling object and filling gap…');
+        showProgress('Scaling object and AI-filling the gap…', 30);
         try {
             var res = await _post('/api/image/scale-selection', {
                 image: this._imageData,
@@ -184,8 +185,10 @@ export class SelectionActions {
             });
             this.tool.updateLayerWithResult(res.result);
             this.tool.clearSelection();
+            hideProgress();
             alertify.success('Scaled by ' + scalePct + '%!');
         } catch (e) {
+            hideProgress();
             alertify.error('Scale failed: ' + e.message);
         }
     }
@@ -193,7 +196,7 @@ export class SelectionActions {
     async _makeAsymmetric() {
         if (!this._check()) return;
         this.hide();
-        alertify.message('AI is adding natural asymmetry…');
+        showProgress('AI is adding natural asymmetry…', 60);
         try {
             var res = await _post('/api/image/ai-edit-region', {
                 image:          this._imageData,
@@ -205,8 +208,10 @@ export class SelectionActions {
             });
             this.tool.updateLayerWithResult(res.result);
             this.tool.clearSelection();
+            hideProgress();
             alertify.success('Made less symmetrical!');
         } catch (e) {
+            hideProgress();
             alertify.error('AI edit failed: ' + e.message);
         }
     }
@@ -214,7 +219,7 @@ export class SelectionActions {
     async _aiEditRegion(instruction) {
         if (!this._check()) return;
         this.hide();
-        alertify.message('AI is editing the region…');
+        showProgress('AI is editing the region…', 60);
         try {
             var res = await _post('/api/image/ai-edit-region', {
                 image:       this._imageData,
@@ -225,8 +230,10 @@ export class SelectionActions {
             });
             this.tool.updateLayerWithResult(res.result);
             this.tool.clearSelection();
+            hideProgress();
             alertify.success('Done!');
         } catch (e) {
+            hideProgress();
             alertify.error('AI edit failed: ' + e.message);
         }
     }
@@ -257,7 +264,7 @@ export class SelectionActions {
 
             var clipBase64 = await _blobToBase64(clipBlob);
             this.hide();
-            alertify.message('Pasting clipboard into selection…');
+            showProgress('Pasting clipboard into selection…', 10);
 
             var res = await _post('/api/image/paste-into-selection', {
                 image:       this._imageData,
@@ -266,8 +273,10 @@ export class SelectionActions {
             });
             this.tool.updateLayerWithResult(res.result);
             this.tool.clearSelection();
+            hideProgress();
             alertify.success('Clipboard pasted into selection!');
         } catch (e) {
+            hideProgress();
             alertify.error('Paste failed: ' + e.message);
         }
     }
