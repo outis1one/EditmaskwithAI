@@ -12,7 +12,7 @@ import Dialog_class from './../../libs/popup.js';
 import alertify from './../../../../node_modules/alertifyjs/build/alertify.min.js';
 import apiService from './../../services/api.js';
 import { getCapabilities } from './../../api/capabilities.js';
-import { showProgress, updateProgress, hideProgress } from './../../libs/progress_overlay.js';
+import { showProgress, updateProgress, hideProgress, connectProgressSSE, disconnectProgressSSE } from './../../libs/progress_overlay.js';
 
 var instance = null;
 
@@ -142,7 +142,8 @@ class Generate_text_to_image_class {
         if (this.isProcessing) return;
         this.isProcessing = true;
 
-        showProgress('Generating image… this may take a minute on local GPU', estSec || 60);
+        connectProgressSSE('txt2img', window.API_BASE_URL || '');
+        showProgress('Generating image…', estSec || 60);
 
         try {
             var result = await apiService.textToImage(params.prompt, {
@@ -185,11 +186,13 @@ class Generate_text_to_image_class {
                         ])
                     );
                 }
+                disconnectProgressSSE();
                 hideProgress();
                 alertify.success('Image generated!');
                 this.isProcessing = false;
             };
             img.onerror = () => {
+                disconnectProgressSSE();
                 hideProgress();
                 alertify.error('Failed to load generated image.');
                 this.isProcessing = false;
@@ -197,6 +200,7 @@ class Generate_text_to_image_class {
             img.src = 'data:image/png;base64,' + result.result;
 
         } catch (err) {
+            disconnectProgressSSE();
             hideProgress();
             alertify.error('Generation failed: ' + (err.message || err));
             this.isProcessing = false;

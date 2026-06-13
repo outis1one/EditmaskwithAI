@@ -18,7 +18,7 @@ import app from './../app.js';
 import config from './../config.js';
 import Base_layers_class from './../core/base-layers.js';
 import alertify from './../../../node_modules/alertifyjs/build/alertify.min.js';
-import { showProgress, hideProgress } from './../libs/progress_overlay.js';
+import { showProgress, updateProgress, hideProgress, connectProgressSSE, disconnectProgressSSE } from './../libs/progress_overlay.js';
 
 const BASE = window.API_BASE_URL || '';
 
@@ -196,6 +196,7 @@ export class SelectionActions {
     async _makeAsymmetric() {
         if (!this._check()) return;
         this.hide();
+        connectProgressSSE('inpaint', window.API_BASE_URL || '');
         showProgress('AI is adding natural asymmetry…', 60);
         try {
             var res = await _post('/api/image/ai-edit-region', {
@@ -208,9 +209,11 @@ export class SelectionActions {
             });
             this.tool.updateLayerWithResult(res.result);
             this.tool.clearSelection();
+            disconnectProgressSSE();
             hideProgress();
             alertify.success('Made less symmetrical!');
         } catch (e) {
+            disconnectProgressSSE();
             hideProgress();
             alertify.error('AI edit failed: ' + e.message);
         }
@@ -219,6 +222,7 @@ export class SelectionActions {
     async _aiEditRegion(instruction) {
         if (!this._check()) return;
         this.hide();
+        connectProgressSSE('inpaint', window.API_BASE_URL || '');
         showProgress('AI is editing the region…', 60);
         try {
             var res = await _post('/api/image/ai-edit-region', {
@@ -230,9 +234,11 @@ export class SelectionActions {
             });
             this.tool.updateLayerWithResult(res.result);
             this.tool.clearSelection();
+            disconnectProgressSSE();
             hideProgress();
             alertify.success('Done!');
         } catch (e) {
+            disconnectProgressSSE();
             hideProgress();
             alertify.error('AI edit failed: ' + e.message);
         }

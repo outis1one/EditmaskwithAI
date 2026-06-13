@@ -48,6 +48,24 @@ def get_all_model_states() -> list[dict]:
         return list(_states.values())
 
 
+def _make_step_cb(pipe_type: str, total_steps: int):
+    """
+    Returns a diffusers callback_on_step_end that writes per-step progress
+    into _states so the SSE /api/generate/progress endpoint can stream it.
+    Called from a thread executor — _set_state is thread-safe.
+    """
+    def cb(pipe, step_index: int, timestep, callback_kwargs: dict) -> dict:
+        done = step_index + 1
+        _set_state(pipe_type,
+                   state="running",
+                   step=done,
+                   total_steps=total_steps,
+                   progress=round(done / total_steps * 85, 1),
+                   message=f"Step {done} / {total_steps}")
+        return callback_kwargs
+    return cb
+
+
 # ── LRU pipeline cache ────────────────────────────────────────────────────────
 
 class _PipelineCache:
@@ -295,18 +313,35 @@ class LocalDiffusionProvider(RemoteAIProvider):
         steps = int(params.get("steps", 30))
         cfg   = float(params.get("cfg_scale", 7.5))
         neg   = params.get("negative_prompt", "") or None
+        step_cb = _make_step_cb("inpaint", steps)
+
+        _set_state("inpaint", state="running", step=0, total_steps=steps, progress=0, message="Starting…")
 
         def _run():
-            return pipe(
-                prompt=prompt,
-                negative_prompt=neg,
-                image=img_r,
-                mask_image=mask_r,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-            ).images[0].resize(orig, Image.LANCZOS)
+            try:
+                return pipe(
+                    prompt=prompt,
+                    negative_prompt=neg,
+                    image=img_r,
+                    mask_image=mask_r,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                    callback_on_step_end=step_cb,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                ).images[0].resize(orig, Image.LANCZOS)
+            except TypeError:
+                return pipe(
+                    prompt=prompt,
+                    negative_prompt=neg,
+                    image=img_r,
+                    mask_image=mask_r,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                ).images[0].resize(orig, Image.LANCZOS)
 
-        return _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
+        result = _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
+        _set_state("inpaint", state="ready", step=None, total_steps=None, progress=100, message="Ready")
+        return result
 
     async def txt2img(self, prompt: str, width: int, height: int, params: dict) -> bytes:
         pipe = await self._get_pipeline("txt2img")
@@ -316,34 +351,61 @@ class LocalDiffusionProvider(RemoteAIProvider):
         w = min(width,  max_dim) // 8 * 8
         h = min(height, max_dim) // 8 * 8
         seed = int(params.get("seed", 0))
-
         is_flux = spec.family == "flux"
+        steps = 4 if is_flux else int(params.get("steps", 30))
+        step_cb = _make_step_cb("txt2img", steps)
+
+        _set_state("txt2img", state="running", step=0, total_steps=steps, progress=0, message="Starting…")
 
         def _run():
             import torch
             device = self._info.backend
             gen = torch.Generator(device=device).manual_seed(seed) if seed else None
 
-            if is_flux:
-                return pipe(
-                    prompt=prompt,
-                    width=w, height=h,
-                    num_inference_steps=4,   # FLUX.1-schnell is a 4-step model
-                    guidance_scale=0.0,      # fully CFG-distilled
-                    max_sequence_length=256,
-                    generator=gen,
-                ).images[0]
-            else:
-                return pipe(
-                    prompt=prompt,
-                    negative_prompt=params.get("negative_prompt", "") or None,
-                    width=w, height=h,
-                    num_inference_steps=int(params.get("steps", 30)),
-                    guidance_scale=float(params.get("cfg_scale", 7.5)),
-                    generator=gen,
-                ).images[0]
+            try:
+                if is_flux:
+                    return pipe(
+                        prompt=prompt,
+                        width=w, height=h,
+                        num_inference_steps=steps,
+                        guidance_scale=0.0,
+                        max_sequence_length=256,
+                        generator=gen,
+                        callback_on_step_end=step_cb,
+                        callback_on_step_end_tensor_inputs=["latents"],
+                    ).images[0]
+                else:
+                    return pipe(
+                        prompt=prompt,
+                        negative_prompt=params.get("negative_prompt", "") or None,
+                        width=w, height=h,
+                        num_inference_steps=steps,
+                        guidance_scale=float(params.get("cfg_scale", 7.5)),
+                        generator=gen,
+                        callback_on_step_end=step_cb,
+                        callback_on_step_end_tensor_inputs=["latents"],
+                    ).images[0]
+            except TypeError:
+                # Older diffusers without callback_on_step_end
+                if is_flux:
+                    return pipe(
+                        prompt=prompt, width=w, height=h,
+                        num_inference_steps=steps, guidance_scale=0.0,
+                        max_sequence_length=256, generator=gen,
+                    ).images[0]
+                else:
+                    return pipe(
+                        prompt=prompt,
+                        negative_prompt=params.get("negative_prompt", "") or None,
+                        width=w, height=h,
+                        num_inference_steps=steps,
+                        guidance_scale=float(params.get("cfg_scale", 7.5)),
+                        generator=gen,
+                    ).images[0]
 
-        return _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
+        result = _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
+        _set_state("txt2img", state="ready", step=None, total_steps=None, progress=100, message="Ready")
+        return result
 
     async def img2img(self, image_bytes: bytes, prompt: str, strength: float, params: dict) -> bytes:
         pipe = await self._get_pipeline("img2img")
@@ -353,28 +415,49 @@ class LocalDiffusionProvider(RemoteAIProvider):
         orig = img.size
         img_r = _resize_square(img, spec.native_res)
         is_flux = spec.family == "flux"
+        steps = 4 if is_flux else int(params.get("steps", 30))
+        step_cb = _make_step_cb("img2img", steps)
+
+        _set_state("img2img", state="running", step=0, total_steps=steps, progress=0, message="Starting…")
 
         def _run():
-            if is_flux:
-                result = pipe(
-                    prompt=prompt,
-                    image=img_r,
-                    strength=strength,
-                    num_inference_steps=4,
-                    guidance_scale=0.0,
-                ).images[0]
-            else:
-                result = pipe(
-                    prompt=prompt,
-                    negative_prompt=params.get("negative_prompt", "") or None,
-                    image=img_r,
-                    strength=strength,
-                    num_inference_steps=int(params.get("steps", 30)),
-                    guidance_scale=float(params.get("cfg_scale", 7.5)),
-                ).images[0]
+            try:
+                if is_flux:
+                    result = pipe(
+                        prompt=prompt, image=img_r, strength=strength,
+                        num_inference_steps=steps, guidance_scale=0.0,
+                        callback_on_step_end=step_cb,
+                        callback_on_step_end_tensor_inputs=["latents"],
+                    ).images[0]
+                else:
+                    result = pipe(
+                        prompt=prompt,
+                        negative_prompt=params.get("negative_prompt", "") or None,
+                        image=img_r, strength=strength,
+                        num_inference_steps=steps,
+                        guidance_scale=float(params.get("cfg_scale", 7.5)),
+                        callback_on_step_end=step_cb,
+                        callback_on_step_end_tensor_inputs=["latents"],
+                    ).images[0]
+            except TypeError:
+                if is_flux:
+                    result = pipe(
+                        prompt=prompt, image=img_r, strength=strength,
+                        num_inference_steps=steps, guidance_scale=0.0,
+                    ).images[0]
+                else:
+                    result = pipe(
+                        prompt=prompt,
+                        negative_prompt=params.get("negative_prompt", "") or None,
+                        image=img_r, strength=strength,
+                        num_inference_steps=steps,
+                        guidance_scale=float(params.get("cfg_scale", 7.5)),
+                    ).images[0]
             return result.resize(orig, Image.LANCZOS)
 
-        return _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
+        result = _to_png(await asyncio.get_event_loop().run_in_executor(None, _run))
+        _set_state("img2img", state="ready", step=None, total_steps=None, progress=100, message="Ready")
+        return result
 
     async def outpaint(self, image_bytes: bytes, direction: str, size: int, prompt: str) -> bytes:
         from PIL import ImageDraw

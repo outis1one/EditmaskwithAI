@@ -4,10 +4,12 @@ All endpoints are under /api prefix.
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 import base64
 import asyncio
+import json
 
 from app.services.local_inpaint import (
     lama_inpaint, opencv_inpaint, lama_available, gpu_available, rembg_available,
@@ -189,6 +191,37 @@ async def inpaint_remote(req: InpaintRemoteRequest):
     except Exception as e:
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/generate/progress")
+async def generation_progress_stream():
+    """
+    SSE stream of local GPU pipeline inference progress.
+    Events are JSON arrays of pipeline state objects, emitted every 200 ms.
+    Each object: {pipeline, state, step, total_steps, progress, message, model_id, …}
+    Clients open this with EventSource before firing a generation POST,
+    then close it when the POST resolves.
+    """
+    from app.services.local_diffusion import get_all_model_states
+
+    async def event_gen():
+        try:
+            while True:
+                states = get_all_model_states()
+                yield f"data: {json.dumps(states)}\n\n"
+                await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/generate/txt2img")

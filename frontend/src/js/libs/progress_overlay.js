@@ -19,6 +19,44 @@ var _shimmerAnim = null;
 var _fakeTimer = null;
 var _currentPct = 0;
 
+// ── SSE progress connection ───────────────────────────────────────────────────
+
+var _sse = null;
+
+/**
+ * Open an EventSource to /api/generate/progress and drive the bar with real
+ * denoising step counts from the local GPU pipeline.
+ *
+ * @param {string} pipeType  - 'txt2img' | 'inpaint' | 'img2img'
+ * @param {string} baseUrl   - window.API_BASE_URL or ''
+ */
+export function connectProgressSSE(pipeType, baseUrl) {
+    disconnectProgressSSE();
+    try {
+        var url = (baseUrl || '') + '/api/generate/progress';
+        _sse = new EventSource(url);
+        _sse.onmessage = (e) => {
+            try {
+                var states = JSON.parse(e.data);
+                var s = Array.isArray(states)
+                    ? states.find(st => st.pipeline === pipeType)
+                    : null;
+                if (s && s.state === 'running' && s.total_steps) {
+                    var pct = Math.round(s.step / s.total_steps * 85);
+                    updateProgress(pct, s.message || `Step ${s.step} / ${s.total_steps}`);
+                }
+            } catch { /* malformed event — ignore */ }
+        };
+        _sse.onerror = () => disconnectProgressSSE();
+    } catch { /* SSE not supported */ }
+}
+
+export function disconnectProgressSSE() {
+    if (_sse) { _sse.close(); _sse = null; }
+}
+
+// ── Progress overlay ──────────────────────────────────────────────────────────
+
 export function showProgress(message, estimatedSeconds) {
     hideProgress();
 
