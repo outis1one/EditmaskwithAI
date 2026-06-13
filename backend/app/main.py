@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
         info = get_cached_gpu_info()
         cc_str = f" | CC={info.compute_capability}" if info.compute_capability else ""
         print(
-            f"[gpu] {info.device_name} | {info.vram_gb:.1f} GB{cc_str} | "
+            f"[gpu] {info.device_name} | {info.vram_total_gb:.1f} GB{cc_str} | "
             f"tier={info.tier} | fp16={info.fp16}"
         )
         for w in info.warnings:
