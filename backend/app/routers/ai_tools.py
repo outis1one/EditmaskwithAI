@@ -10,6 +10,7 @@ from typing import Optional
 import base64
 import asyncio
 import json
+from io import BytesIO
 
 from app.services.local_inpaint import (
     lama_inpaint, opencv_inpaint, lama_available, gpu_available, rembg_available,
