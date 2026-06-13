@@ -1,354 +1,197 @@
-# AI Photo Edit
+# EditmaskwithAI
 
-AI Photo Edit is a self-hosted, web-based image editing tool that allows you to regenerate only a selected area of a photo using AI.
+A self-hosted, web-based AI photo editor. Paint over any object, describe what you want, and the AI replaces just that region — every pixel outside your selection stays untouched.
 
-## Core Concept
+## Quick Start
 
-**Have AI regenerate only a selected area of a photo.**
+### GPU machine (recommended — free inference, best quality)
 
-- Upload an image
-- Select a specific region (rectangle, ellipse, or freehand lasso)
-- Enter a prompt describing what to fix
-- Have AI regenerate only the selected region
-- Composite the regenerated region back into the original image
-- Preserve every pixel outside the selection
-- Maintain full edit history and reversibility
-
-**The system does not regenerate the entire image.**
-**The system does not alter any pixel outside the selected mask.**
-
-## Features
-
-### Selection Tools
-- **Rectangle**: Click and drag to select rectangular regions
-- **Ellipse**: Click and drag to select elliptical regions
-- **Lasso**: Draw freehand selections around irregular shapes
-
-### AI Modes
-- **Mode A (Default)**: Send only the selected patch
-  - Faster processing
-  - Lower cost
-  - Best for isolated fixes
-
-- **Mode B**: Send patch + full image reference
-  - Better style consistency
-  - More context-aware results
-  - Higher cost
-
-### Edge Blending
-- Adjustable feather slider (0-50 pixels)
-- Smooth blending at selection edges
-- Prevents harsh transitions
-
-### Edit History
-- Full history of all edits
-- Revert to any previous edit
-- Reset to original image
-- All edits are reversible
-
-## Architecture
-
-```
-AI Photo Edit
-├── Frontend (React + Fabric.js)
-│   ├── Image canvas with selection tools
-│   ├── Controls (mode, feather, prompt)
-│   └── Edit history viewer
-│
-├── Backend (FastAPI)
-│   ├── Image processing
-│   ├── AI provider integration
-│   ├── Database (SQLite)
-│   └── File storage
-│
-└── Docker Compose
-    ├── Backend service
-    └── Frontend service (nginx)
-```
-
-## Installation
-
-### Prerequisites
-- Docker and Docker Compose
-- AI API key (OpenAI or Stability AI) for production use
-
-### Quick Start
-
-1. **Clone the repository**
 ```bash
-git clone <repository-url>
-cd EditmaskwithAI
+# Prerequisites: Docker + nvidia-container-toolkit
+# Install toolkit once (Ubuntu/Debian):
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-ctk.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-ctk.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# Verify GPU passes through into Docker:
+docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+
+# Clone and run:
+git clone https://github.com/outis1one/editmaskwithai
+cd editmaskwithai
+docker compose -f docker-compose.gpu.yml up --build
 ```
 
-2. **Configure environment variables**
+Open **http://localhost:3080**
+
+**First startup downloads the AI model for your GPU (5–20 GB, one time).** Models are cached in a Docker volume and survive rebuilds.
+
+---
+
+### Cloud API (no GPU required)
+
 ```bash
+git clone https://github.com/outis1one/editmaskwithai
+cd editmaskwithai
 cp .env.example .env
+# Edit .env: set AI_PROVIDER and your API key (see .env.example for options)
+docker compose up -d --build
 ```
 
-Edit `.env` and set your AI provider:
-```env
-# For OpenAI (DALL-E)
-AI_PROVIDER=openai
-OPENAI_API_KEY=your-openai-api-key-here
+Open **http://localhost:3080**
 
-# OR for Stability AI
-AI_PROVIDER=stability
-STABILITY_API_KEY=your-stability-api-key-here
+---
 
-# OR for testing (no AI, returns original)
-AI_PROVIDER=mock
-```
-
-3. **Start the application**
-```bash
-docker-compose up -d
-```
-
-4. **Access the application**
-- Frontend: http://localhost
-- Backend API: http://localhost:8000
-- API Documentation: http://localhost:8000/docs
-
-### Development Setup
-
-For development with hot-reload:
+### Updates (any machine)
 
 ```bash
-docker-compose -f docker-compose.dev.yml up
+git pull
+# GPU:
+docker compose -f docker-compose.gpu.yml up -d --build
+# or cloud:
+docker compose up -d --build
 ```
 
-- Frontend: http://localhost:5173 (Vite dev server)
-- Backend: http://localhost:8000 (auto-reload enabled)
+---
 
-## Usage
+## AI Providers
 
-### 1. Create a Project
-- Enter a project name
-- Upload your image (PNG, JPG, etc.)
-- Click "Create Project"
+| Provider | Setup | Cost | Quality |
+|---|---|---|---|
+| `local_gpu` | GPU machine + nvidia-container-toolkit | Free | Best (SDXL/FLUX auto-selected by VRAM) |
+| `openai` | `OPENAI_API_KEY=sk-...` | ~$0.02–0.04/image | DALL-E 3 |
+| `replicate` | `REPLICATE_API_KEY=r8_...` | ~$0.002–0.03/image | Multiple models |
+| `invokeai` | InvokeAI running on another machine | Self-hosted | FLUX/SDXL |
+| `comfyui` | ComfyUI running on another machine | Self-hosted | Any model |
 
-### 2. Select an Area
-- Choose a selection tool (Rectangle, Ellipse, or Lasso)
-- Draw your selection on the image
-- Adjust the selection if needed
+You can also mix: set a default provider in `.env` and override per-operation in the **Image → AI Provider Settings** dialog inside the app.
 
-### 3. Configure Edit
-- **AI Mode**: Choose Mode A (faster) or Mode B (better context)
-- **Feather**: Adjust edge blending (0-50 pixels)
-- **Prompt**: Describe what you want to change
+---
 
-Examples:
-- "Remove the person"
-- "Change sky to sunset"
-- "Fix the red eye"
-- "Add flowers"
+## GPU Tier Auto-Selection
 
-### 4. Process Edit
-- Click "Fix Selected Area"
-- Wait for AI processing (status shown in history)
-- View the result on the canvas
+The app detects your GPU at startup and picks the best model it can run:
 
-### 5. Manage History
-- View all edits in the history panel
-- Revert to any previous edit
-- Reset to original image anytime
+| Effective VRAM | Model selected | Notes |
+|---|---|---|
+| ≥ 24 GB | FLUX.1-schnell | Best quality, 4-step generation |
+| 12–24 GB | SDXL | Excellent quality |
+| 8–12 GB | SDXL + xformers | Good quality |
+| 6–8 GB | SDXL + attention slicing | Good quality, slightly slower |
+| 4–6 GB | SDXL + CPU offload | Good quality, slower (GTX 1060 6GB range) |
+| 2–4 GB | SD 1.5 | Fast, lower detail |
+| < 2 GB | SD 1.5 + CPU offload | Very slow — consider a cloud provider |
 
-## API Documentation
+Override the auto-selected model with `HF_MODEL_TXT2IMG`, `HF_MODEL_INPAINT` in `.env`.
 
-### Projects
+---
 
-**Create Project**
-```
-POST /projects/
-Body: { "name": "My Project" }
-```
+## What it can do
 
-**Upload Image**
-```
-POST /projects/{project_id}/upload
-Body: multipart/form-data with image file
-```
+### Selection
+- **Smart Select (SAM brush)** — paint over an object, AI detects its exact boundaries
+- **Smart Select (click)** — click any object, SAM selects it
+- **Rectangle / Ellipse / Lasso** — classic selection tools
 
-**List Projects**
-```
-GET /projects/
-```
+### After selecting
+- **AI Edit** — describe what to change ("add a scar", "make it look aged")
+- **Make less symmetrical** — AI adds natural organic variation
+- **Replace with clipboard** — paste any image into the selection shape
+- **Scale by %** — make the selected object bigger/smaller, AI fills the gap
+- **Copy / Cut to layer** — non-destructive layer workflow
+- **Erase** — remove the selected region with AI fill
 
-**Get Project**
-```
-GET /projects/{project_id}
-```
+### Image tools
+- **Text → Image** — generate from a text description (GPU or cloud)
+- **Upscale** — Real-ESRGAN AI upscaling (genuinely adds detail, not just resize)
+- **Prepare for Print** — one-click: AI upscale to target DPI + fit to frame
+- **Fit to Frame** — resize/crop/AI-extend to standard print sizes
+- **Expand Canvas (Outpaint)** — AI extends the image in any direction
+- **Remove Background** — one-click background removal
 
-### Edits
+### Print presets
+Frame sizes: 4×6, 5×7, 8×10, 11×14, 16×20, 18×24, 20×24, 24×36 (portrait + landscape)  
+DPI options: 72, 150, 200, 300 — 200 DPI is fine for 18×24" and larger (viewed from distance)
 
-**Create Edit**
-```
-POST /edits/projects/{project_id}/fix
-Body: {
-  "prompt": "Remove the object",
-  "mode": "A",
-  "selection_type": "rectangle",
-  "bbox": { "x": 100, "y": 100, "width": 200, "height": 200 },
-  "feather_px": 5,
-  "selection_data": null
-}
-```
+---
 
-**Get Edit Status**
-```
-GET /edits/{edit_id}
+## Progress bars
+
+All AI operations show a real-time progress overlay. For local GPU inference, the bar advances step-by-step as the model denoises (e.g. "Step 14 / 30"). For cloud providers and upscale operations, it animates to indicate activity.
+
+---
+
+## Logs
+
+```bash
+# GPU container:
+docker compose -f docker-compose.gpu.yml logs -f
+
+# Standard container:
+docker compose logs -f
 ```
 
-**Revert to Edit**
-```
-POST /edits/projects/{project_id}/revert/{edit_id}
-```
+---
 
-**Reset to Original**
-```
-POST /edits/projects/{project_id}/reset
-```
-
-### Images
-
-**Get Original Image**
-```
-GET /projects/{project_id}/original
-```
-
-**Get Current Image**
-```
-GET /projects/{project_id}/current
-```
-
-**Get Edit Result**
-```
-GET /projects/{project_id}/history/{edit_id}/result
-```
-
-## File Structure
+## File structure
 
 ```
 EditmaskwithAI/
 ├── backend/
 │   ├── app/
-│   │   ├── models/          # Database models
-│   │   ├── routers/         # API endpoints
-│   │   ├── services/        # Business logic
-│   │   ├── utils/           # Image processing utilities
-│   │   ├── config.py        # Configuration
-│   │   ├── database.py      # Database setup
-│   │   └── main.py          # FastAPI app
-│   ├── Dockerfile
-│   └── requirements.txt
-│
+│   │   ├── routers/         # API endpoints (ai_tools, print_tools, …)
+│   │   ├── services/        # gpu_detect, local_diffusion, upscale, …
+│   │   └── config.py
+│   ├── requirements.txt
+│   └── requirements.gpu.txt
 ├── frontend/
-│   ├── src/
-│   │   ├── components/      # React components
-│   │   │   ├── ImageCanvas.jsx
-│   │   │   ├── Controls.jsx
-│   │   │   └── History.jsx
-│   │   ├── utils/           # API client
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── Dockerfile
-│   ├── nginx.conf
-│   └── package.json
-│
-├── data/                    # Persistent data (auto-created)
-│   ├── ai_photo_edit.db    # SQLite database
-│   └── projects/           # Project files
-│
-├── docker-compose.yml
-├── docker-compose.dev.yml
-└── README.md
+│   └── src/js/
+│       ├── tools/           # brush_select (SAM paint), smart_select, …
+│       ├── modules/
+│       │   ├── generate/    # text_to_image, outpaint
+│       │   └── image/       # upscale, frame_fit, print_prepare, …
+│       └── libs/
+│           └── progress_overlay.js
+├── docker-compose.yml           # Cloud / no-GPU
+├── docker-compose.gpu.yml       # NVIDIA GPU (recommended)
+├── docker-compose.dev.yml       # Dev with hot reload
+├── Dockerfile
+├── Dockerfile.gpu
+└── .env.example
 ```
-
-## Data Storage
-
-### Database (SQLite)
-- **users**: User accounts
-- **projects**: Project metadata
-- **edits**: Edit history and metadata
-
-### Filesystem
-```
-data/projects/{project_id}/
-├── original.png           # Original uploaded image
-├── current.png           # Current edited image
-└── history/{edit_id}/
-    ├── patch_in.png      # Original patch
-    ├── patch_out.png     # AI-generated patch
-    ├── mask.png          # Selection mask
-    ├── result.png        # Final result
-    └── meta.json         # Edit metadata
-```
-
-## AI Provider Configuration
-
-### OpenAI (DALL-E)
-```env
-AI_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-```
-
-### Stability AI
-```env
-AI_PROVIDER=stability
-STABILITY_API_KEY=sk-...
-```
-
-### Mock (Testing)
-```env
-AI_PROVIDER=mock
-```
-Returns the original patch unchanged - useful for testing without API costs.
-
-## Constraints
-
-- Only the selected region is regenerated
-- No modification outside the mask
-- Slight drift inside mask is acceptable
-- All edits are logged and reversible
-- Mode A is default (cost-efficient)
-- Mode B available for better style consistency
-
-## Non-Goals (MVP)
-
-- No automatic anomaly detection
-- No local GPU inference
-- No full image regeneration
-- No collaborative editing
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check the API documentation at `/docs`
-
-## Roadmap
-
-Future enhancements:
-- Multi-user authentication
-- Batch processing
-- Additional AI providers
-- Advanced selection tools
-- Real-time collaboration
-- Export formats (PSD, TIFF)
 
 ---
 
-**AI Photo Edit** - Regenerate only what you need to change.
+## Troubleshooting
+
+**GPU not detected in Docker**
+```bash
+# Check toolkit is installed and Docker restarted:
+docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+# If that fails, re-run: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+```
+
+**Model download stalls or fails**
+```bash
+# Check logs for HuggingFace errors:
+docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Error|Failed"
+# If a private/gated model: add HF_TOKEN=hf_... to .env
+```
+
+**Out of VRAM during generation**
+- Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)
+- Or override to a smaller model: `HF_MODEL_TXT2IMG=runwayml/stable-diffusion-v1-5`
+
+**Settings saved locally only**
+- The in-app AI Provider Settings dialog saves to localStorage for the session
+- To make settings permanent: edit `.env` and rebuild
+
+**Check API docs**
+```
+http://localhost:3080/api/docs
+```
