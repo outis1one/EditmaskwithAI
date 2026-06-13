@@ -39,10 +39,13 @@ async def lifespan(app: FastAPI):
     ):
         from app.services.gpu_detect import get_cached_gpu_info
         info = get_cached_gpu_info()
+        cc_str = f" | CC={info.compute_capability}" if info.compute_capability else ""
         print(
-            f"[gpu] {info.device_name} | {info.vram_gb:.1f} GB | tier={info.tier} | "
-            f"backend={info.backend}"
+            f"[gpu] {info.device_name} | {info.vram_gb:.1f} GB{cc_str} | "
+            f"tier={info.tier} | fp16={info.fp16}"
         )
+        for w in info.warnings:
+            print(f"[gpu] ⚠ {w}")
         if settings.auto_download_models:
             # Download model weight files to disk cache in background so first
             # user request loads from local disk instead of the internet.

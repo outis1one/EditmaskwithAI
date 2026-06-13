@@ -189,25 +189,36 @@ class LocalDiffusionProvider(RemoteAIProvider):
 
             pipe = cls.from_pretrained(model_id, **kwargs)
 
-            # Move to device unless using CPU offload
-            if tier != "low" or device != "cpu":
-                pipe = pipe.to(device)
-
-            # Memory optimisations
-            if tier in ("low", "medium"):
-                try:
-                    pipe.enable_attention_slicing()
-                except Exception:
-                    pass
-            if tier == "low" and device == "cuda":
-                try:
-                    pipe.enable_sequential_cpu_offload()
-                except Exception:
-                    pass
+            # Memory optimisations — applied based on VRAM tier:
+            #   minimal/legacy: full aggressive offloading (sequential CPU offload)
+            #   medium:         attention slicing + VAE slicing
+            #   high/ultra:     VAE slicing only (VRAM is plentiful)
             try:
                 pipe.enable_vae_slicing()
             except Exception:
                 pass
+
+            if tier in ("minimal", "legacy", "medium"):
+                try:
+                    pipe.enable_attention_slicing(1)  # slice_size=1 = most aggressive
+                except Exception:
+                    pass
+
+            if tier in ("minimal", "legacy"):
+                # Sequential CPU offload keeps only the active layer on GPU — very low VRAM
+                # but adds overhead per-step. Skip .to(device) when this is active.
+                if device == "cuda":
+                    try:
+                        pipe.enable_sequential_cpu_offload()
+                    except Exception:
+                        # Fallback: model stays on CPU entirely
+                        pass
+                elif device == "cpu":
+                    pass  # already on CPU
+                else:
+                    pipe = pipe.to(device)
+            else:
+                pipe = pipe.to(device)
 
             _set_state(pipe_type, state="ready", progress=100.0, message="Ready")
             return pipe
@@ -246,6 +257,7 @@ class LocalDiffusionProvider(RemoteAIProvider):
         target = 1024 if info.tier in ("ultra", "high") else 512
         img_r, mask_r = _resize_pair(img, mask, target)
 
+
         steps = int(params.get("steps", 30))
         cfg = float(params.get("cfg_scale", 7.5))
         neg = params.get("negative_prompt", "") or None
@@ -269,7 +281,7 @@ class LocalDiffusionProvider(RemoteAIProvider):
         pipe = await self._get_pipeline("txt2img")
         info = self._info
 
-        max_dim = 1024 if info.tier in ("ultra", "high") else 768
+        max_dim = 1024 if info.tier in ("ultra", "high") else (768 if info.tier == "medium" else 512)
         w = min(width, max_dim) // 8 * 8
         h = min(height, max_dim) // 8 * 8
 
@@ -303,7 +315,7 @@ class LocalDiffusionProvider(RemoteAIProvider):
 
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
         orig_size = img.size
-        target = 1024 if info.tier in ("ultra", "high") else 512
+        target = 1024 if info.tier in ("ultra", "high") else (768 if info.tier == "medium" else 512)
         img_r = _resize_square(img, target)
 
         steps = int(params.get("steps", 30))

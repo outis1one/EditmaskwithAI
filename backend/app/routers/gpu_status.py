@@ -26,8 +26,10 @@ async def gpu_status():
         "backend": info.backend,
         "device_name": info.device_name,
         "vram_gb": info.vram_gb,
+        "compute_capability": info.compute_capability,
         "tier": info.tier,
         "fp16": info.fp16,
+        "warnings": info.warnings,
         "capabilities": info.capabilities,
         "models": {
             op: {"model_id": mid, "available": mid is not None}

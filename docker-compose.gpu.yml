@@ -1,20 +1,60 @@
 # =============================================================================
 # EditmaskwithAI — GPU Docker Compose (NVIDIA CUDA)
 #
-# Quick start:
+# ── PREREQUISITES ─────────────────────────────────────────────────────────────
+#
+# 1. NVIDIA driver ≥ 525 installed on the host
+#    Check: nvidia-smi
+#
+# 2. nvidia-container-toolkit installed and configured:
+#    (Ubuntu/Debian)
+#      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+#        | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-ctk.gpg
+#      curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+#        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-ctk.gpg] https://#g' \
+#        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+#      sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+#      sudo nvidia-ctk runtime configure --runtime=docker
+#      sudo systemctl restart docker
+#
+#    (RHEL/Fedora/Rocky)
+#      sudo dnf install -y nvidia-container-toolkit
+#      sudo nvidia-ctk runtime configure --runtime=docker
+#      sudo systemctl restart docker
+#
+# 3. Verify GPU access in Docker:
+#    docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+#
+# ── QUICK START ───────────────────────────────────────────────────────────────
+#
 #   docker compose -f docker-compose.gpu.yml up --build
+#   Then open: http://localhost:3080
 #
-# Then open: http://localhost:3080
+# ── OLDER DOCKER SETUPS (docker-compose v1 / nvidia-docker2) ─────────────────
 #
-# What this does:
-#   • Detects your NVIDIA GPU at startup
-#   • Picks the best Stable Diffusion models for your VRAM tier
-#   • Auto-downloads models on first use (cached in a Docker volume)
-#   • Exposes local GPU generation (inpaint, outpaint, txt2img, img2img, upscale)
-#   • Still supports InvokeAI / ComfyUI / OpenAI via env vars below
+# If you installed nvidia-docker2 (older approach) instead of nvidia-container-toolkit,
+# replace the 'deploy:' block below with:
 #
-# AMD ROCm: swap Dockerfile.gpu base image for a ROCm PyTorch image,
-#           remove the 'nvidia' driver line, and set device capabilities to [gpu].
+#   runtime: nvidia
+#   environment:
+#     - NVIDIA_VISIBLE_DEVICES=all
+#     - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+#
+# ── GPU TIER AUTO-SELECTION ───────────────────────────────────────────────────
+#
+#   ≥16 GB VRAM  → SDXL (best quality)
+#    8–16 GB     → SDXL
+#    4–8 GB      → Stable Diffusion 2.x
+#    2–4 GB      → Stable Diffusion 1.5  (older GPUs: GTX 970/1060/RX 580)
+#    <2 GB       → SD 1.5 + CPU offload  (very slow — consider a remote provider)
+#
+# ── AMD ROCm ──────────────────────────────────────────────────────────────────
+#
+#   Swap the base image in Dockerfile.gpu:
+#     FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+#   → FROM rocm/pytorch:rocm6.0_ubuntu22.04_py3.9_pytorch_2.1.0
+#   Remove the 'driver: nvidia' line and add:  device_ids: ['0']
+#
 # =============================================================================
 
 services:
@@ -72,7 +112,12 @@ services:
       - CORS_ORIGINS=*
       - AUTO_DOWNLOAD_SAM=${AUTO_DOWNLOAD_SAM:-true}
 
-    # NVIDIA GPU passthrough — requires nvidia-container-toolkit on the host.
+    # ── NVIDIA GPU passthrough ────────────────────────────────────────────────
+    # Requires nvidia-container-toolkit; see prerequisites at top of this file.
+    # For older nvidia-docker2 setups, replace this block with:
+    #   runtime: nvidia
+    #   environment:
+    #     - NVIDIA_VISIBLE_DEVICES=all
     deploy:
       resources:
         reservations:
