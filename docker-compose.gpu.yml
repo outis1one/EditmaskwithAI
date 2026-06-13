@@ -126,8 +126,12 @@ services:
               count: 1
               capabilities: [gpu]
 
-    # Reliable DNS for HuggingFace Hub downloads and external API calls
+    # DNS: try host resolver first (works on most networks including corporate/VPN),
+    # fall back to Cloudflare then Google public resolvers.
+    # If all three fail (Errno -3), your firewall is blocking port 53 UDP from Docker.
+    # Fix on the host: sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
     dns:
+      - 1.1.1.1
       - 8.8.8.8
       - 8.8.4.4
 
