@@ -21,6 +21,7 @@ FRAME_SIZES = {
     "8x10":  (8, 10),
     "11x14": (11, 14),
     "16x20": (16, 20),
+    "18x24": (18, 24),
     "20x24": (20, 24),
     "24x36": (24, 36),
     # Square
@@ -63,6 +64,16 @@ class UpscaleRequest(BaseModel):
     scale: float = 2.0                      # 1.5, 2, 3, 4
     # auto = pick best available; lanczos = always works; realesrgan_pytorch / realesrgan_ncnn = explicit
     method: str = "auto"
+
+
+class PrepareRequest(BaseModel):
+    image: str                              # base64
+    frame: str                              # e.g. "8x10"
+    orientation: Literal["auto", "portrait", "landscape"] = "auto"
+    target_dpi: int = 300
+    upscale_method: str = "auto"            # auto / realesrgan_pytorch / realesrgan_ncnn / lanczos
+    mode: Literal["crop", "extend", "smart"] = "smart"
+    prompt: Optional[str] = ""
 
 
 # ── Frame sizes endpoint ───────────────────────────────────────────────────
@@ -333,6 +344,105 @@ def upscale_install_status():
     else:
         status["ncnn_available"] = False
     return status
+
+
+@router.post("/prepare")
+async def prepare_for_print(req: PrepareRequest):
+    """
+    One-shot Prepare for Print: AI upscale to reach target DPI, then fit to frame.
+
+    Steps:
+      1. Resolve target pixel dimensions (frame × target_dpi, orientation-adjusted)
+      2. Calculate needed upscale factor so the image meets the target resolution
+      3. Run Real-ESRGAN if scale > 1.05 (else skip — already large enough)
+      4. Run frame-fit (crop / extend / smart) to exact target dimensions
+      5. Return the print-ready image and a quality report
+    """
+    if req.frame not in FRAME_SIZES:
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown frame '{req.frame}'. Valid: {list(FRAME_SIZES.keys())}")
+    if not (72 <= req.target_dpi <= 600):
+        raise HTTPException(status_code=400, detail="target_dpi must be 72–600")
+
+    try:
+        image = Image.open(BytesIO(_decode(req.image))).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not decode image: {e}")
+
+    fw, fh = FRAME_SIZES[req.frame]
+    img_w, img_h = image.size
+
+    # Resolve orientation (same logic as frame_fit)
+    img_landscape = img_w >= img_h
+    frame_landscape = fw >= fh
+    if req.orientation == "landscape":
+        fw, fh = max(fw, fh), min(fw, fh)
+    elif req.orientation == "portrait":
+        fw, fh = min(fw, fh), max(fw, fh)
+    else:
+        if img_landscape and not frame_landscape:
+            fw, fh = fh, fw
+        elif not img_landscape and frame_landscape:
+            fw, fh = fh, fw
+
+    target_w = fw * req.target_dpi
+    target_h = fh * req.target_dpi
+
+    # Scale factor needed so the shorter dimension fills the frame
+    scale_w = target_w / img_w
+    scale_h = target_h / img_h
+    needed_scale = min(scale_w, scale_h)  # fill-to-fit (extend) baseline
+    # For crop mode we need max; use the larger to be safe and let frame-fit crop
+    needed_scale_crop = max(scale_w, scale_h)
+
+    # Use the smaller (extend) scale as the upscale target; frame-fit handles the rest
+    upscale_factor = max(1.0, needed_scale)
+    upscale_applied = False
+    method_used = "none"
+
+    upscaled = image
+    if upscale_factor > 1.05:
+        # Cap per-pass at 4× (Real-ESRGAN works best at 2–4×)
+        remaining = upscale_factor
+        while remaining > 1.05:
+            pass_scale = min(remaining, 4.0)
+            # Round to one decimal to keep scale in 1.1–8.0 range accepted by upscale service
+            pass_scale = round(pass_scale, 1)
+            if pass_scale < 1.1:
+                break
+            from app.services.upscale import upscale_image
+            result_bytes, method_used = await upscale_image(upscaled, pass_scale, req.upscale_method)
+            upscaled = Image.open(BytesIO(result_bytes)).convert("RGB")
+            remaining /= pass_scale
+        upscale_applied = True
+
+    # Encode upscaled image and run frame-fit
+    upscaled_b64 = _encode(_to_png(upscaled))
+
+    fit_req = FrameFitRequest(
+        image=upscaled_b64,
+        frame=req.frame,
+        orientation=req.orientation,
+        mode=req.mode,
+        dpi=req.target_dpi,
+        prompt=req.prompt or "",
+    )
+    # Re-use the existing frame_fit logic inline
+    fit_response = await frame_fit(fit_req)
+
+    return {
+        "result": fit_response["result"],
+        "frame": req.frame,
+        "orientation": fit_response["orientation"],
+        "output_pixels": fit_response["output_pixels"],
+        "output_inches": fit_response["output_inches"],
+        "dpi": req.target_dpi,
+        "mode_used": fit_response["mode_used"],
+        "upscale_applied": upscale_applied,
+        "upscale_factor": round(upscale_factor, 2),
+        "upscale_method": method_used,
+        "summary": fit_response["summary"],
+    }
 
 
 @router.post("/upscale")

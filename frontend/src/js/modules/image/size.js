@@ -16,6 +16,10 @@ const PRINT_SIZES = [
 	[3000, 2400, '8x10" Landscape'],
 	[3300, 4200, '11x14" Portrait'],
 	[4200, 3300, '11x14" Landscape'],
+	[3600, 4800, '18x24" Portrait 200dpi'],
+	[4800, 3600, '18x24" Landscape 200dpi'],
+	[5400, 7200, '18x24" Portrait 300dpi'],
+	[7200, 5400, '18x24" Landscape 300dpi'],
 ];
 
 class Image_size_class {
