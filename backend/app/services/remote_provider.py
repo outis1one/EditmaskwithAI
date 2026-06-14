@@ -432,7 +432,8 @@ def _build_provider(name: str) -> Optional[RemoteAIProvider]:
         try:
             from app.services.local_diffusion import get_local_diffusion_provider
             return get_local_diffusion_provider(max_pipelines=settings.local_gpu_max_pipelines)
-        except ImportError:
+        except (ImportError, AttributeError) as exc:
+            print(f"[local_gpu] Cannot load diffusion provider: {exc}")
             return None
 
     return None

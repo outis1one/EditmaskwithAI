@@ -57,6 +57,12 @@ docker compose -f docker-compose.gpu.yml up -d --build
 docker compose up -d --build
 ```
 
+If pip packages seem stale after a pull (e.g., wrong diffusers version), force a pip layer rebuild without re-downloading the entire PyTorch base image:
+
+```bash
+BUILDID=$(date +%s) docker compose -f docker-compose.gpu.yml up -d --build
+```
+
 ---
 
 ## AI Providers
@@ -201,6 +207,33 @@ docker compose -f docker-compose.gpu.yml logs | grep -i sam
 ```
 
 If Docker created `./data/` as root and you can't write there without `sudo`, you can also use root's curl as above — the container reads the file regardless of owner.
+
+**AI Edit returns "model files not yet downloaded" or "Errno -3 / DNS" error**
+
+The container's DNS is blocked (common on corporate networks or custom iptables rules), so it can't download SDXL models from HuggingFace. Two options:
+
+*Option A — fix Docker DNS (recommended, one command):*
+```bash
+sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
+docker compose -f docker-compose.gpu.yml restart
+```
+
+*Option B — pre-download models on the host (if iptables fix isn't possible):*
+```bash
+pip install huggingface-hub
+
+# Download the inpainting model (~6.5 GB, needed for AI Edit):
+huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
+  --cache-dir ./data/hf_cache \
+  --exclude "*.msgpack" "flax_*" "tf_*"
+
+# Download the text-to-image model (~6.5 GB, needed for Text → Image):
+huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
+  --cache-dir ./data/hf_cache \
+  --exclude "*.msgpack" "flax_*" "tf_*"
+```
+
+The models land in `./data/hf_cache/` which is bind-mounted into the container — no rebuild needed. Restart the container and the first AI Edit request loads from local disk.
 
 **Out of VRAM during generation**
 - Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)

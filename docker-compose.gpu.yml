@@ -62,14 +62,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gpu
+      args:
+        # Increment BUILDID to force pip layers to re-run without full --no-cache:
+        #   BUILDID=$(date +%s) docker compose -f docker-compose.gpu.yml up --build
+        BUILDID: ${BUILDID:-1}
     container_name: editmaskwithai-gpu
     ports:
       - "${PORT:-3080}:8000"
     volumes:
       # Persistent project data
       - ./data:/app/data
-      # HuggingFace model cache — keeps downloaded models across rebuilds (~5-20 GB)
-      - hf_model_cache:/root/.cache/huggingface
+      # HuggingFace model cache — bind mount so models can be pre-downloaded on the host.
+      # If container DNS is blocked, download on the host and the container picks them up:
+      #   pip install huggingface-hub
+      #   huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
+      #     --cache-dir ./data/hf_cache
+      # To free disk space: rm -rf ./data/hf_cache
+      - ./data/hf_cache:/root/.cache/huggingface
       # Scripts (for exec access)
       - ./scripts:/scripts
     environment:
@@ -136,8 +145,3 @@ services:
       - 8.8.4.4
 
     restart: unless-stopped
-
-volumes:
-  hf_model_cache:
-    # Survives docker compose down; delete manually to free disk space:
-    #   docker volume rm editmaskwithai_hf_model_cache

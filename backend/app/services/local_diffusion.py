@@ -11,8 +11,8 @@ Supported model families:
   sd2x  → StableDiffusion2*Pipeline               (SD 2.x)
   sd15  → StableDiffusionPipeline                 (SD 1.5)
 
-Requires: diffusers>=0.29.0, transformers, accelerate, safetensors
-          (all in requirements.gpu.txt)
+Requires: diffusers>=0.28.0,<0.29.0, transformers, accelerate, safetensors
+          (all in requirements.gpu.txt — pinned <0.29.0 for PyTorch 2.1.x compatibility)
 """
 from __future__ import annotations
 
