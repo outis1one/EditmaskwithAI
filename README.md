@@ -7,29 +7,22 @@ A self-hosted, web-based AI photo editor. Paint over any object, describe what y
 ### GPU machine (recommended — free inference, best quality)
 
 ```bash
-# Prerequisites: Docker + nvidia-container-toolkit
-# Install toolkit once (Ubuntu/Debian):
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-ctk.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-ctk.gpg] https://#g' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# Verify GPU passes through into Docker:
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
-
-# Clone and run:
 git clone https://github.com/outis1one/editmaskwithai
 cd editmaskwithai
-docker compose -f docker-compose.gpu.yml up --build
+
+# One-time setup: installs nvidia-container-toolkit, configures Docker,
+# and sets up a permanent DNS fix so the container can download models.
+chmod +x install-local-gpu.sh
+./install-local-gpu.sh
+
+# Start the app (run this each time):
+chmod +x bring-up-local-gpu.sh
+./bring-up-local-gpu.sh
 ```
 
 Open **http://localhost:3080**
 
-**First startup downloads the AI model for your GPU (5–20 GB, one time).** Models are cached in a Docker volume and survive rebuilds.
+**First startup downloads the AI model for your GPU (~13 GB, one time).** Models are cached in `./data/hf_cache/` and survive rebuilds.
 
 ---
 
@@ -52,15 +45,15 @@ Open **http://localhost:3080**
 ```bash
 git pull
 # GPU:
-docker compose -f docker-compose.gpu.yml up -d --build
-# or cloud:
+./bring-up-local-gpu.sh
+# or cloud (no GPU):
 docker compose up -d --build
 ```
 
 If pip packages seem stale after a pull (e.g., wrong diffusers version), force a pip layer rebuild without re-downloading the entire PyTorch base image:
 
 ```bash
-BUILDID=$(date +%s) docker compose -f docker-compose.gpu.yml up -d --build
+BUILDID=$(date +%s) ./bring-up-local-gpu.sh
 ```
 
 ---
@@ -208,32 +201,41 @@ docker compose -f docker-compose.gpu.yml logs | grep -i sam
 
 If Docker created `./data/` as root and you can't write there without `sudo`, you can also use root's curl as above — the container reads the file regardless of owner.
 
-**AI Edit returns "model files not yet downloaded" or "Errno -3 / DNS" error**
+**AI models not downloading (container DNS blocked)**
 
-The container's DNS is blocked (common on corporate networks or custom iptables rules), so it can't download SDXL models from HuggingFace. Two options:
+If you ran `./install-local-gpu.sh`, this is already permanently fixed. Otherwise, the container's host firewall is blocking outbound DNS from the Docker bridge — apply the fix manually (does **not** affect container isolation):
 
-*Option A — fix Docker DNS (recommended, one command):*
 ```bash
 sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
-docker compose -f docker-compose.gpu.yml restart
+./bring-up-local-gpu.sh
 ```
 
-*Option B — pre-download models on the host (if iptables fix isn't possible):*
+The container will now resolve hostnames and download models automatically (~13 GB on first run, then cached). Watch progress:
 ```bash
-pip install huggingface-hub
-
-# Download the inpainting model (~6.5 GB, needed for AI Edit):
-huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
-  --cache-dir ./data/hf_cache \
-  --exclude "*.msgpack" "flax_*" "tf_*"
-
-# Download the text-to-image model (~6.5 GB, needed for Text → Image):
-huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
-  --cache-dir ./data/hf_cache \
-  --exclude "*.msgpack" "flax_*" "tf_*"
+docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Cached|failed"
 ```
 
-The models land in `./data/hf_cache/` which is bind-mounted into the container — no rebuild needed. Restart the container and the first AI Edit request loads from local disk.
+**Alternative: download with a Docker helper container** (no iptables, no host Python needed):
+
+```bash
+# Inpainting model (~6.5 GB) — needed for AI Edit, Make less symmetrical, etc.
+docker run --rm \
+  -v "$(pwd)/data/hf_cache:/root/.cache/huggingface" \
+  python:3.11-slim \
+  bash -c "pip install -q huggingface-hub && \
+    huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
+      --exclude '*.msgpack' 'flax_*' 'tf_*'"
+
+# Text-to-image model (~6.5 GB) — needed for Text → Image
+docker run --rm \
+  -v "$(pwd)/data/hf_cache:/root/.cache/huggingface" \
+  python:3.11-slim \
+  bash -c "pip install -q huggingface-hub && \
+    huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
+      --exclude '*.msgpack' 'flax_*' 'tf_*'"
+```
+
+Then restart: `docker compose -f docker-compose.gpu.yml restart`
 
 **Out of VRAM during generation**
 - Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)
