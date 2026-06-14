@@ -7,30 +7,22 @@ A self-hosted, web-based AI photo editor. Paint over any object, describe what y
 ### GPU machine (recommended — free inference, best quality)
 
 ```bash
-# Prerequisites: Docker + nvidia-container-toolkit
-# Install toolkit once (Ubuntu/Debian):
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-ctk.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-ctk.gpg] https://#g' \
-  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# Verify GPU passes through into Docker:
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
-
-# Clone and run:
 git clone https://github.com/outis1one/editmaskwithai
 cd editmaskwithai
-chmod +x start-gpu.sh
-./start-gpu.sh
+
+# One-time setup: installs nvidia-container-toolkit, configures Docker,
+# and sets up a permanent DNS fix so the container can download models.
+chmod +x install-local-gpu.sh
+./install-local-gpu.sh
+
+# Start the app (run this each time):
+chmod +x bring-up-local-gpu.sh
+./bring-up-local-gpu.sh
 ```
 
 Open **http://localhost:3080**
 
-**First startup downloads the AI model for your GPU (5–20 GB, one time).** Models are cached in a Docker volume and survive rebuilds.
+**First startup downloads the AI model for your GPU (~13 GB, one time).** Models are cached in `./data/hf_cache/` and survive rebuilds.
 
 ---
 
@@ -53,7 +45,7 @@ Open **http://localhost:3080**
 ```bash
 git pull
 # GPU:
-./start-gpu.sh          # applies DNS fix then rebuilds + starts
+./bring-up-local-gpu.sh
 # or cloud (no GPU):
 docker compose up -d --build
 ```
@@ -61,7 +53,7 @@ docker compose up -d --build
 If pip packages seem stale after a pull (e.g., wrong diffusers version), force a pip layer rebuild without re-downloading the entire PyTorch base image:
 
 ```bash
-BUILDID=$(date +%s) ./start-gpu.sh --build
+BUILDID=$(date +%s) ./bring-up-local-gpu.sh
 ```
 
 ---
@@ -211,19 +203,19 @@ If Docker created `./data/` as root and you can't write there without `sudo`, yo
 
 **AI models not downloading (container DNS blocked)**
 
-If the container can't reach HuggingFace (`Errno -3` in logs), your host firewall is blocking outbound DNS queries from the Docker bridge. The fix below restores Docker's default behaviour — it does **not** affect container isolation (filesystem, network namespace, PID namespace all remain separate):
+If you ran `./install-local-gpu.sh`, this is already permanently fixed. Otherwise, the container's host firewall is blocking outbound DNS from the Docker bridge — apply the fix manually (does **not** affect container isolation):
 
 ```bash
 sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
-docker compose -f docker-compose.gpu.yml restart
+./bring-up-local-gpu.sh
 ```
 
-The container will now resolve hostnames and download the models automatically (~13 GB on first run, then cached). Watch progress:
+The container will now resolve hostnames and download models automatically (~13 GB on first run, then cached). Watch progress:
 ```bash
 docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Cached|failed"
 ```
 
-**If you can't run the iptables command**, download with a Docker helper container instead (no host Python needed):
+**Alternative: download with a Docker helper container** (no iptables, no host Python needed):
 
 ```bash
 # Inpainting model (~6.5 GB) — needed for AI Edit, Make less symmetrical, etc.
