@@ -24,7 +24,8 @@ docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 # Clone and run:
 git clone https://github.com/outis1one/editmaskwithai
 cd editmaskwithai
-docker compose -f docker-compose.gpu.yml up --build
+chmod +x start-gpu.sh
+./start-gpu.sh
 ```
 
 Open **http://localhost:3080**
@@ -52,15 +53,15 @@ Open **http://localhost:3080**
 ```bash
 git pull
 # GPU:
-docker compose -f docker-compose.gpu.yml up -d --build
-# or cloud:
+./start-gpu.sh          # applies DNS fix then rebuilds + starts
+# or cloud (no GPU):
 docker compose up -d --build
 ```
 
 If pip packages seem stale after a pull (e.g., wrong diffusers version), force a pip layer rebuild without re-downloading the entire PyTorch base image:
 
 ```bash
-BUILDID=$(date +%s) docker compose -f docker-compose.gpu.yml up -d --build
+BUILDID=$(date +%s) ./start-gpu.sh --build
 ```
 
 ---
