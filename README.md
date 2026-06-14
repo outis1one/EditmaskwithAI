@@ -208,32 +208,33 @@ docker compose -f docker-compose.gpu.yml logs | grep -i sam
 
 If Docker created `./data/` as root and you can't write there without `sudo`, you can also use root's curl as above — the container reads the file regardless of owner.
 
-**AI Edit returns "model files not yet downloaded" or "Errno -3 / DNS" error**
+**AI models not downloading (container DNS blocked)**
 
-The container's DNS is blocked (common on corporate networks or custom iptables rules), so it can't download SDXL models from HuggingFace. Two options:
+If the container can't reach HuggingFace (`Errno -3` in logs), download the model files directly on the host — no rebuild needed, the container reads from the same `./data/hf_cache/` folder.
 
-*Option A — fix Docker DNS (recommended, one command):*
-```bash
-sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
-docker compose -f docker-compose.gpu.yml restart
-```
-
-*Option B — pre-download models on the host (if iptables fix isn't possible):*
 ```bash
 pip install huggingface-hub
 
-# Download the inpainting model (~6.5 GB, needed for AI Edit):
+# Inpainting model (~6.5 GB) — needed for AI Edit, Make less symmetrical, etc.
 huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
   --cache-dir ./data/hf_cache \
   --exclude "*.msgpack" "flax_*" "tf_*"
 
-# Download the text-to-image model (~6.5 GB, needed for Text → Image):
+# Text-to-image model (~6.5 GB) — needed for Text → Image
 huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
   --cache-dir ./data/hf_cache \
   --exclude "*.msgpack" "flax_*" "tf_*"
 ```
 
-The models land in `./data/hf_cache/` which is bind-mounted into the container — no rebuild needed. Restart the container and the first AI Edit request loads from local disk.
+Once both downloads finish, restart the container:
+```bash
+docker compose -f docker-compose.gpu.yml restart
+```
+
+The first AI Edit request loads from local disk (10–30 s, not a download). Verify in logs:
+```bash
+docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Cached|failed"
+```
 
 **Out of VRAM during generation**
 - Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)
