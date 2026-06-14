@@ -210,7 +210,19 @@ If Docker created `./data/` as root and you can't write there without `sudo`, yo
 
 **AI models not downloading (container DNS blocked)**
 
-If the container can't reach HuggingFace (`Errno -3` in logs), use a lightweight Docker helper container to download the models on your behalf — no host Python packages required. The files land in `./data/hf_cache/` which is bind-mounted into the GPU container.
+If the container can't reach HuggingFace (`Errno -3` in logs), your host firewall is blocking outbound DNS queries from the Docker bridge. The fix below restores Docker's default behaviour — it does **not** affect container isolation (filesystem, network namespace, PID namespace all remain separate):
+
+```bash
+sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
+docker compose -f docker-compose.gpu.yml restart
+```
+
+The container will now resolve hostnames and download the models automatically (~13 GB on first run, then cached). Watch progress:
+```bash
+docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Cached|failed"
+```
+
+**If you can't run the iptables command**, download with a Docker helper container instead (no host Python needed):
 
 ```bash
 # Inpainting model (~6.5 GB) — needed for AI Edit, Make less symmetrical, etc.
@@ -230,15 +242,7 @@ docker run --rm \
       --exclude '*.msgpack' 'flax_*' 'tf_*'"
 ```
 
-Once both downloads finish, restart the container:
-```bash
-docker compose -f docker-compose.gpu.yml restart
-```
-
-The first AI Edit request loads from local disk (10–30 s, not a download). Verify in logs:
-```bash
-docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Cached|failed"
-```
+Then restart: `docker compose -f docker-compose.gpu.yml restart`
 
 **Out of VRAM during generation**
 - Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)
