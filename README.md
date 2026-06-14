@@ -210,20 +210,24 @@ If Docker created `./data/` as root and you can't write there without `sudo`, yo
 
 **AI models not downloading (container DNS blocked)**
 
-If the container can't reach HuggingFace (`Errno -3` in logs), download the model files directly on the host — no rebuild needed, the container reads from the same `./data/hf_cache/` folder.
+If the container can't reach HuggingFace (`Errno -3` in logs), use a lightweight Docker helper container to download the models on your behalf — no host Python packages required. The files land in `./data/hf_cache/` which is bind-mounted into the GPU container.
 
 ```bash
-pip install huggingface-hub
-
 # Inpainting model (~6.5 GB) — needed for AI Edit, Make less symmetrical, etc.
-huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
-  --cache-dir ./data/hf_cache \
-  --exclude "*.msgpack" "flax_*" "tf_*"
+docker run --rm \
+  -v "$(pwd)/data/hf_cache:/root/.cache/huggingface" \
+  python:3.11-slim \
+  bash -c "pip install -q huggingface-hub && \
+    huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
+      --exclude '*.msgpack' 'flax_*' 'tf_*'"
 
 # Text-to-image model (~6.5 GB) — needed for Text → Image
-huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
-  --cache-dir ./data/hf_cache \
-  --exclude "*.msgpack" "flax_*" "tf_*"
+docker run --rm \
+  -v "$(pwd)/data/hf_cache:/root/.cache/huggingface" \
+  python:3.11-slim \
+  bash -c "pip install -q huggingface-hub && \
+    huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
+      --exclude '*.msgpack' 'flax_*' 'tf_*'"
 ```
 
 Once both downloads finish, restart the container:
