@@ -2,11 +2,12 @@
 # install-local-gpu.sh — one-time setup for local GPU inference.
 #
 # Run this once on a new machine. It:
-#   1. Installs the NVIDIA container toolkit (so Docker can use the GPU)
-#   2. Installs a systemd service that permanently fixes Docker container DNS
+#   1. Checks prerequisites (Docker, NVIDIA driver, curl)
+#   2. Installs the NVIDIA container toolkit (so Docker can use the GPU)
+#   3. Installs a systemd service that permanently fixes Docker container DNS
 #      (allows containers to resolve hostnames — does not touch ufw)
-#   3. Restarts Docker so both changes take effect
-#   4. Verifies the GPU is accessible inside Docker
+#   4. Restarts Docker so both changes take effect
+#   5. Verifies the GPU is accessible inside Docker
 #
 # After this, use ./bring-up-local-gpu.sh each time to start the app.
 
@@ -22,7 +23,146 @@ echo "  EditmaskwithAI — Local GPU one-time setup"
 echo "=================================================="
 echo ""
 
+# ── 0. Prerequisite checks ────────────────────────────────────────────────────
+MISSING=0
+
+# Docker
+if ! command -v docker &>/dev/null; then
+    echo "✗ Docker is not installed."
+    echo "  Install it from https://docs.docker.com/engine/install/"
+    echo "  Quick install (Ubuntu/Debian):"
+    echo "    curl -fsSL https://get.docker.com | sh"
+    echo "    sudo usermod -aG docker \$USER   # then log out and back in"
+    echo ""
+    MISSING=1
+else
+    echo "✓ Docker $(docker --version | awk '{print $3}' | tr -d ',')"
+fi
+
+# Docker daemon running
+if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
+    echo "✗ Docker daemon is not running."
+    echo "    sudo systemctl start docker"
+    echo ""
+    MISSING=1
+fi
+
+# NVIDIA driver
+if ! command -v nvidia-smi &>/dev/null; then
+    echo "✗ NVIDIA driver not found (nvidia-smi missing)."
+    echo "  Install the driver first (≥ 525 required for CUDA 12.x):"
+    echo "    Ubuntu: sudo apt install nvidia-driver-525"
+    echo "    Or download from https://www.nvidia.com/drivers"
+    echo "  After installing, reboot before re-running this script."
+    echo ""
+    MISSING=1
+else
+    DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
+    echo "✓ NVIDIA driver $DRIVER_VER"
+fi
+
+# curl (used to fetch toolkit repo config)
+if ! command -v curl &>/dev/null; then
+    echo "✗ curl is not installed."
+    echo "    sudo apt install curl   # or: sudo dnf install curl"
+    echo ""
+    MISSING=1
+else
+    echo "✓ curl"
+fi
+
+if [ "$MISSING" -ne 0 ]; then
+    echo "──────────────────────────────────────────────────"
+    echo "  Fix the above issues then re-run this script."
+    echo "=================================================="
+    exit 1
+fi
+
+echo ""
+
 # ── 1. NVIDIA container toolkit ──────────────────────────────────────────────
+if command -v nvidia-ctk &>/dev/null; then
+    echo "✓ nvidia-container-toolkit already installed — skipping"
+else
+    echo "Installing nvidia-container-toolkit..."
+    . /etc/os-release
+    case "$ID" in
+        ubuntu|debian)
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+                | gpg --dearmor -o /usr/share/keyrings/nvidia-ctk.gpg
+            curl -fsSL "https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list" \
+                | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-ctk.gpg] https://#g' \
+                | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+            apt-get update -qq
+            apt-get install -y nvidia-container-toolkit
+            ;;
+        rhel|fedora|rocky|centos|almalinux)
+            dnf install -y nvidia-container-toolkit
+            ;;
+        *)
+            echo "⚠ Unrecognised distro ($ID). Install nvidia-container-toolkit manually."
+            echo "  See: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
+            ;;
+    esac
+fi
+
+nvidia-ctk runtime configure --runtime=docker
+
+# ── 2. Permanent Docker DNS fix via systemd ───────────────────────────────────
+# Adds a rule to the DOCKER-USER iptables chain so containers can resolve
+# hostnames. Runs after docker.service on every boot. Does NOT touch ufw.
+echo ""
+echo "Installing docker-dns-fix systemd service..."
+
+cat > /etc/systemd/system/docker-dns-fix.service << 'EOF'
+[Unit]
+Description=Allow Docker containers to resolve DNS (DOCKER-USER iptables rule)
+After=docker.service
+Requires=docker.service
+BindsTo=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c \
+  'iptables -C DOCKER-USER -p udp --dport 53 -j ACCEPT 2>/dev/null || \
+   iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable docker-dns-fix.service
+echo "✓ docker-dns-fix.service installed and enabled"
+
+# ── 3. Restart Docker ─────────────────────────────────────────────────────────
+echo ""
+echo "Restarting Docker..."
+systemctl restart docker
+sleep 2
+echo "✓ Docker restarted"
+
+# ── 4. Apply DNS rule now (don't wait for next boot) ─────────────────────────
+systemctl start docker-dns-fix.service
+echo "✓ DNS fix applied"
+
+# ── 5. Verify GPU access ─────────────────────────────────────────────────────
+echo ""
+echo "Verifying GPU access inside Docker..."
+if docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi &>/dev/null; then
+    echo "✓ GPU is accessible inside Docker"
+else
+    echo "⚠ GPU check failed. Try rebooting if the driver was just installed."
+    echo "  Manual check: nvidia-smi"
+fi
+
+echo ""
+echo "=================================================="
+echo "  Setup complete."
+echo "  Start the app with:  ./bring-up-local-gpu.sh"
+echo "=================================================="
+
 if command -v nvidia-ctk &>/dev/null; then
     echo "✓ nvidia-container-toolkit already installed — skipping"
 else
