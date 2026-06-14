@@ -10,6 +10,7 @@ from typing import Optional
 import base64
 import asyncio
 import json
+from io import BytesIO
 
 from app.services.local_inpaint import (
     lama_inpaint, opencv_inpaint, lama_available, gpu_available, rembg_available,
@@ -79,8 +80,19 @@ def _encode(data: bytes) -> str:
 
 def _require_remote(operation: str = None):
     from app.services.remote_provider import get_remote_provider
+    from app.config import settings
     provider = get_remote_provider(operation)
     if provider is None:
+        if (settings.ai_provider or "").lower() == "local_gpu":
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "local_gpu provider failed to load — diffusers may be incompatible with "
+                    "the installed PyTorch version. Check container logs for details. "
+                    "If you see 'torch has no attribute xpu', rebuild the container from the "
+                    "correct branch so the pinned diffusers<0.29.0 is installed."
+                )
+            )
         op_hint = f"AI_PROVIDER_{operation.upper()} or " if operation else ""
         raise HTTPException(
             status_code=503,
@@ -501,12 +513,28 @@ async def ai_edit_region(req: AiEditRegionRequest):
     Works with local_gpu, InvokeAI, ComfyUI, or OpenAI.
     """
     provider = _require_remote("inpaint")
-    result_bytes = await provider.inpaint(
-        _decode(req.image),
-        _decode(req.mask),
-        req.instruction,
-        {"negative_prompt": req.negative_prompt, "steps": req.steps, "cfg_scale": req.cfg_scale},
-    )
+    try:
+        result_bytes = await provider.inpaint(
+            _decode(req.image),
+            _decode(req.mask),
+            req.instruction,
+            {"negative_prompt": req.negative_prompt, "steps": req.steps, "cfg_scale": req.cfg_scale},
+        )
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        msg = str(exc)
+        if "Errno -3" in msg or "Name or service not known" in msg or "ConnectError" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI model files not yet downloaded — container DNS appears to be blocked. "
+                    "Fix: sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT on the host, "
+                    "or pre-download the model: pip install huggingface-hub && "
+                    "huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 "
+                    "--cache-dir ./data/hf_cache"
+                )
+            )
+        raise HTTPException(status_code=500, detail=msg)
     return {"result": _encode(result_bytes)}
 
 

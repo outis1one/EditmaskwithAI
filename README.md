@@ -57,6 +57,12 @@ docker compose -f docker-compose.gpu.yml up -d --build
 docker compose up -d --build
 ```
 
+If pip packages seem stale after a pull (e.g., wrong diffusers version), force a pip layer rebuild without re-downloading the entire PyTorch base image:
+
+```bash
+BUILDID=$(date +%s) docker compose -f docker-compose.gpu.yml up -d --build
+```
+
 ---
 
 ## AI Providers
@@ -182,6 +188,52 @@ docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 docker compose -f docker-compose.gpu.yml logs -f | grep -E "local_gpu|Error|Failed"
 # If a private/gated model: add HF_TOKEN=hf_... to .env
 ```
+
+**SAM model fails to download (DNS error / firewall blocking port 53)**
+
+If the container can't reach `dl.fbaipublicfiles.com` (you'll see `Errno -3 Name or service not known` in the logs), download SAM directly on the host and let the bind mount make it visible to the container — no rebuild needed:
+
+```bash
+mkdir -p ./data/models
+# sudo needed if ./data/ was created by Docker (root-owned):
+sudo curl -L -o ./data/models/sam_vit_b_01ec64.pth \
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+```
+
+The file is ~375 MB. Once it exists at `./data/models/sam_vit_b_01ec64.pth`, the container picks it up on the next startup (no rebuild required). Verify with:
+```bash
+docker compose -f docker-compose.gpu.yml logs | grep -i sam
+# Should show: "SAM model loaded on cuda" (or cpu)
+```
+
+If Docker created `./data/` as root and you can't write there without `sudo`, you can also use root's curl as above — the container reads the file regardless of owner.
+
+**AI Edit returns "model files not yet downloaded" or "Errno -3 / DNS" error**
+
+The container's DNS is blocked (common on corporate networks or custom iptables rules), so it can't download SDXL models from HuggingFace. Two options:
+
+*Option A — fix Docker DNS (recommended, one command):*
+```bash
+sudo iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
+docker compose -f docker-compose.gpu.yml restart
+```
+
+*Option B — pre-download models on the host (if iptables fix isn't possible):*
+```bash
+pip install huggingface-hub
+
+# Download the inpainting model (~6.5 GB, needed for AI Edit):
+huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
+  --cache-dir ./data/hf_cache \
+  --exclude "*.msgpack" "flax_*" "tf_*"
+
+# Download the text-to-image model (~6.5 GB, needed for Text → Image):
+huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 \
+  --cache-dir ./data/hf_cache \
+  --exclude "*.msgpack" "flax_*" "tf_*"
+```
+
+The models land in `./data/hf_cache/` which is bind-mounted into the container — no rebuild needed. Restart the container and the first AI Edit request loads from local disk.
 
 **Out of VRAM during generation**
 - Reduce `LOCAL_GPU_MAX_PIPELINES=1` in `.env` (default 2)

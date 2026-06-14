@@ -42,10 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies — base + GPU extras
+# BUILDID forces pip layers to re-run when you need fresh packages without a full --no-cache:
+#   BUILDID=$(date +%s) docker compose -f docker-compose.gpu.yml up --build
+ARG BUILDID=1
 COPY backend/requirements.txt .
 COPY backend/requirements.gpu.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -r requirements.gpu.txt
+RUN echo "BUILDID=$BUILDID" && pip install --no-cache-dir -r requirements.txt
+RUN echo "BUILDID=$BUILDID" && pip install --no-cache-dir -r requirements.gpu.txt
 
 # Smoke-test rembg (model downloads on first use)
 RUN python -c "from rembg import remove; print('rembg OK')" \

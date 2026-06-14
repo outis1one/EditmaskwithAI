@@ -1,10 +1,6 @@
 /**
- * ProviderBadge — small DOM element showing the active AI provider.
- * Inserted into the toolbar footer on app load.
- *
- * Green  = remote provider healthy (or local_gpu active)
- * Yellow = provider configured but unhealthy/unreachable
- * Grey   = local only (LaMa + OpenCV)
+ * ProviderBadge — compact status indicator in the left toolbar footer.
+ * Shows a dot + 3-5 char label; all details in the tooltip.
  */
 
 import { getCapabilities } from '../../api/capabilities.js';
@@ -15,84 +11,74 @@ export async function mountProviderBadge(container) {
     var badge = document.createElement('div');
     badge.id = 'provider-badge';
     badge.style.cssText = [
-        'display:inline-flex', 'align-items:center', 'gap:5px',
-        'padding:3px 8px', 'border-radius:10px',
-        'font-size:11px', 'font-family:sans-serif',
+        'display:flex', 'flex-direction:column', 'align-items:center', 'gap:2px',
+        'padding:4px 2px 4px',
+        'font-size:9px', 'font-family:sans-serif', 'line-height:1.2',
         'cursor:default', 'user-select:none',
-        'margin:4px', 'opacity:0.85',
+        'width:100%', 'box-sizing:border-box',
+        'text-align:center', 'word-break:break-word',
     ].join(';');
 
     var dot = document.createElement('span');
-    dot.style.cssText = 'width:7px;height:7px;border-radius:50%;display:inline-block;';
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;display:block;flex-shrink:0;';
 
     var label = document.createElement('span');
+    label.style.cssText = 'color:inherit;max-width:36px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;';
 
     var remote = caps.remote || {};
     var local  = caps.local  || {};
 
     if (remote.provider === 'local_gpu') {
-        // Local GPU provider — show GPU name and tier from /api/config local fields
         var gpuName = _shortGpuName(local.gpu_device);
         var tier = local.gpu_tier || '';
 
         if (remote.healthy) {
             dot.style.background = '#44cc44';
-            badge.style.background = '#1a2a1a';
             badge.style.color = '#aaffaa';
-            label.textContent = 'GPU · ' + tier + ' · ' + gpuName;
+            label.textContent = _shortTier(tier);
 
             var flagList = [
                 local.gpu_fp16 && 'fp16',
                 local.gpu_bf16 && 'bf16',
                 local.gpu_fp8  && 'fp8',
-                local.gpu_tensor_cores && 'tensor-cores',
+                local.gpu_tensor_cores && 'TC',
             ].filter(Boolean).join(' ');
 
             badge.title = [
-                local.gpu_device || gpuName,
-                'VRAM: ' + local.gpu_vram_total + ' GB total  ' + local.gpu_vram_free + ' GB free',
-                'Compute: CC ' + local.gpu_cc + '  Eff: ' + local.gpu_eff_vram + ' GB',
-                flagList ? 'Features: ' + flagList : '',
-                'Capabilities: ' + (local.local_gpu_capabilities || []).join(', '),
+                gpuName,
+                'VRAM: ' + local.gpu_vram_total + ' GB total / ' + local.gpu_vram_free + ' GB free',
+                'CC: ' + local.gpu_cc + '  Eff VRAM: ' + local.gpu_eff_vram + ' GB',
+                flagList ? 'Flags: ' + flagList : '',
+                tier ? 'Tier: ' + tier : '',
                 (local.local_gpu_warnings || []).length
-                    ? '\nWarnings:\n' + local.local_gpu_warnings.join('\n')
+                    ? 'Warnings:\n' + local.local_gpu_warnings.join('\n')
                     : '',
             ].filter(Boolean).join('\n');
         } else {
             dot.style.background = '#ffaa00';
-            badge.style.background = '#2a2000';
             badge.style.color = '#ffdd88';
-            label.textContent = 'Local GPU (not ready)';
-            badge.title = 'local_gpu is configured but the diffusers library may not be installed.\nCheck container logs for details.';
+            label.textContent = 'GPU?';
+            badge.title = 'local_gpu configured but diffusers may not be installed.\nCheck container logs.';
         }
     } else if (remote.provider && remote.healthy) {
         dot.style.background = '#44cc44';
-        badge.style.background = '#1a2a1a';
         badge.style.color = '#aaffaa';
-
-        var overrides = remote.overrides || {};
-        var overrideEntries = Object.entries(overrides).filter(([, v]) => v);
-        var overrideStr = overrideEntries.length
-            ? ' · ' + overrideEntries.map(([k, v]) => k + '→' + v).join(', ')
-            : '';
-        label.textContent = remote.provider + overrideStr + (local.gpu_detected ? ' · GPU' : '');
+        label.textContent = _shortProvider(remote.provider);
 
         var opLines = Object.entries(remote.operations || {})
             .map(([op, s]) => op + ': ' + (s.provider || remote.provider) + ' ' + (s.healthy ? '✓' : '✗'))
             .join('\n');
-        badge.title = opLines || ('Provider: ' + remote.provider);
+        badge.title = ('Provider: ' + remote.provider) + (opLines ? '\n' + opLines : '');
     } else if (remote.provider && !remote.healthy) {
         dot.style.background = '#ffaa00';
-        badge.style.background = '#2a2000';
         badge.style.color = '#ffdd88';
-        label.textContent = remote.provider + ' (offline)';
-        badge.title = remote.provider + ' is configured but not reachable. Check your .env URL.';
+        label.textContent = _shortProvider(remote.provider) + '?';
+        badge.title = remote.provider + ' configured but not reachable.\nCheck your .env URL.';
     } else {
         dot.style.background = '#888888';
-        badge.style.background = '#1a1a1a';
         badge.style.color = '#aaaaaa';
-        label.textContent = 'Local' + (local.lama ? ' · LaMa' : '') + (local.gpu_detected ? ' · GPU' : '');
-        badge.title = 'Local only. Set AI_PROVIDER in .env to enable generative tools.';
+        label.textContent = local.lama ? 'LaMa' : 'Local';
+        badge.title = 'Local only (no generative AI).\nSet AI_PROVIDER in .env to enable.';
     }
 
     badge.appendChild(dot);
@@ -108,6 +94,25 @@ export async function mountProviderBadge(container) {
 function _shortGpuName(name) {
     return (name || 'GPU')
         .replace(/^NVIDIA GeForce\s+/i, '')
+        .replace(/^NVIDIA Quadro\s+/i, '')
         .replace(/^NVIDIA\s+/i, '')
         .replace(/^AMD Radeon\s+/i, '');
+}
+
+function _shortTier(tier) {
+    if (!tier) return 'GPU';
+    // sdxl_offload → SDXL, flux → FLUX, sd15 → SD15
+    return tier
+        .replace(/_offload$/, '')
+        .replace(/_cpu$/, '')
+        .toUpperCase()
+        .slice(0, 6);
+}
+
+function _shortProvider(p) {
+    var map = {
+        openai: 'OAI', replicate: 'Rep', stability: 'Stab',
+        invokeai: 'Inv', comfyui: 'CUI', local_gpu: 'GPU',
+    };
+    return map[p] || (p || 'AI').slice(0, 4);
 }
